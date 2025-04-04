@@ -1,15 +1,3 @@
-
-The user wants me to write a description for the SHADE shader, but with a specific focus on it being a companion to in-game FXAA. I'll need to craft a description that emphasizes how SHADE complements FXAA specifically in game environments, highlighting their synergy rather than competition.
-
-I should focus on:
-1. How SHADE works alongside in-game FXAA (not replacing it)
-2. The specific advantages SHADE offers that in-game FXAA might miss
-3. Why they work well together in a gaming context
-4. The technical advantages of using both
-5. Performance considerations
-
-I don't need to search for information here as I'm being asked to create marketing copy for the shader the user has already developed, and I have all the information about its capabilities from our conversation.
-
 # SHADE - Superior Hybrid Anti-Aliasing
 
 **In-game FXAA's Perfect Partner**
