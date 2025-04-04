@@ -75,6 +75,14 @@ uniform float AdaptiveThresholdStrength <
     ui_category = "Advanced";
 > = 0.50;
 
+uniform float GradientPreservationStrength <
+    ui_type = "slider";
+    ui_min = 0.0; ui_max = 1.0; ui_step = 0.05;
+    ui_label = "Gradient Preservation Strength";
+    ui_tooltip = "Preserves smooth gradients in objects and shadows. Higher values maintain more of the original gradient.";
+    ui_category = "Advanced";
+> = 0.70;
+
 uniform int PanelType <
     ui_type = "combo";
     ui_items = "RGB\0BGR\0RGBW\0WRGB\0Samsung OLED (Steam Deck)\0BOE OLED (Steam Deck)\0";
@@ -138,7 +146,7 @@ uniform bool DebugView <
 
 uniform int DebugMode <
     ui_type = "combo";
-    ui_items = "Edge Detection\0Pattern Recognition\0Curve Detection\0Filtering Intensity\0Depth Map\0";
+    ui_items = "Edge Detection\0Pattern Recognition\0Curve Detection\0Filtering Intensity\0Depth Map\0Gradient Detection\0";
     ui_label = "Debug Mode";
     ui_tooltip = "What to display when Debug View is enabled.";
     ui_category = "Debug";
@@ -158,6 +166,17 @@ float GetPresetEdgeThreshold() {
             return 0.30;
         default: // Custom
             return EdgeDetectionThreshold;
+    }
+}
+
+float GetPresetGradientPreservation() {
+    switch(DevicePreset) {
+        case 1: // Steam Deck LCD
+        case 2: // Steam Deck OLED (BOE)
+        case 3: // Steam Deck OLED LE (Samsung)
+            return 0.70;
+        default: // Custom
+            return GradientPreservationStrength;
     }
 }
 
@@ -389,6 +408,91 @@ float4 GetLocalContrast(float2 texcoord, float2 pixelSize) {
     return float4(maxLuma - minLuma, avgLuma, maxLuma, minLuma);
 }
 
+// Function to detect if a pixel is part of a smooth gradient rather than an edge
+bool IsGradient(float2 texcoord, float2 pixelSize, out float gradientStrength) {
+    // Sample a 5x5 area to analyze gradient patterns
+    float luma[25];
+    int idx = 0;
+
+    for (int y = -2; y <= 2; y++) {
+        for (int x = -2; x <= 2; x++) {
+            luma[idx++] = GetLuminance(GetPixelColor(texcoord + float2(x, y) * pixelSize));
+        }
+    }
+
+    // Center pixel
+    float centerLuma = luma[12];
+
+    // Calculate average differences between adjacent pixels
+    float horizDiff = 0;
+    float vertDiff = 0;
+    float diagDiff1 = 0;
+    float diagDiff2 = 0;
+
+    // Horizontal gradient check (middle row)
+    for (int i = 0; i < 4; i++) {
+        horizDiff += abs(luma[10 + i] - luma[10 + i + 1]);
+    }
+    horizDiff /= 4;
+
+    // Vertical gradient check (middle column)
+    for (int i = 0; i < 4; i++) {
+        vertDiff += abs(luma[2 + i*5] - luma[2 + (i+1)*5]);
+    }
+    vertDiff /= 4;
+
+    // Diagonal gradients
+    for (int i = 0; i < 4; i++) {
+        diagDiff1 += abs(luma[i*6] - luma[(i+1)*6]); // Top-left to bottom-right
+        diagDiff2 += abs(luma[4 + i*4] - luma[4 + (i+1)*4]); // Top-right to bottom-left
+    }
+    diagDiff1 /= 4;
+    diagDiff2 /= 4;
+
+    // Calculate variance as a measure of how "noisy" the area is
+    float mean = 0;
+    for (int i = 0; i < 25; i++) {
+        mean += luma[i];
+    }
+    mean /= 25;
+
+    float variance = 0;
+    for (int i = 0; i < 25; i++) {
+        variance += pow(luma[i] - mean, 2);
+    }
+    variance /= 25;
+
+    // Check for consistent gradient characteristics:
+    // 1. Low variance overall (smooth transitions)
+    // 2. Consistent and small differences between adjacent pixels
+    // 3. Lack of sharp changes in any direction
+
+    float maxDiff = max(max(horizDiff, vertDiff), max(diagDiff1, diagDiff2));
+    float minDiff = min(min(horizDiff, vertDiff), min(diagDiff1, diagDiff2));
+
+    // Consistent gradient will have similar differences in multiple directions
+    float directionalConsistency = (maxDiff > 0.001) ? minDiff / maxDiff : 1.0;
+
+    // Metrics for gradient detection:
+    // - Low variance indicates smooth transitions
+    // - Consistent small differences between adjacent pixels
+    // - Direction consistency indicates uniform gradient rather than an edge
+
+    // For a strong gradient:
+    // - Variance should be low (< 0.01 for subtle gradients)
+    // - Max difference should be small but non-zero (0.001 - 0.05 for most gradients)
+    // - Directional consistency should be high (> 0.5 for uniform gradients)
+
+    bool isSmooth = variance < 0.01;
+    bool isConsistent = directionalConsistency > 0.5;
+    bool hasGradient = maxDiff > 0.001 && maxDiff < 0.05;
+
+    // Calculate overall gradient strength as a confidence value
+    gradientStrength = saturate((1.0 - variance * 50.0) * directionalConsistency * saturate(maxDiff * 50.0));
+
+    return isSmooth && hasGradient && isConsistent;
+}
+
 // Function to check if a pixel likely belongs to pixel art
 bool IsPixelArt(float2 texcoord, float2 pixelSize) {
     // Check for sharp right-angle corners (characteristic of pixel art)
@@ -447,11 +551,14 @@ void ApplyPerspectiveCompensation(inout float edgeThreshold, inout float gapThre
 
 // Advanced edge detection with directional analysis using 24-factor multisampling
 void AdvancedEdgeDetection(float2 texcoord, float2 pixelSize, float depth, out float edgeStrength,
-                           out float2 edgeDirection, out float isDirectional, out bool isNW_SE, out bool isNE_SW, out float isCurved) {
+                           out float2 edgeDirection, out float isDirectional, out bool isNW_SE, out bool isNE_SW, out float isCurved, out bool isGradient, out float gradientStrength) {
     // Apply perspective compensation to detection parameters
     float adjustedEdgeThreshold = GetPresetEdgeThreshold();
     float adjustedGapThreshold = GetPresetGapThreshold();
     float adjustedFilterStrength = GetPresetFilterStrength();
+
+    // Check if pixel is part of a gradient
+    isGradient = IsGradient(texcoord, pixelSize, gradientStrength);
 
     // Adjust detection parameters based on depth
     ApplyPerspectiveCompensation(adjustedEdgeThreshold, adjustedGapThreshold,
@@ -599,6 +706,13 @@ void AdvancedEdgeDetection(float2 texcoord, float2 pixelSize, float depth, out f
     // For pixels detected as pixel art, reduce edge strength if preservation is enabled
     if (GetPresetPreservePixelArt() && IsPixelArt(texcoord, pixelSize)) {
         edgeStrength *= 0.5; // Less reduction to maintain some effect on pixel art
+    }
+
+    // For pixels detected as gradients, reduce edge strength based on gradient preservation setting
+    if (isGradient) {
+        float gradientPreservation = GetPresetGradientPreservation();
+        // Scale edge strength inversely with gradient strength and preservation setting
+        edgeStrength *= max(0.1, 1.0 - (gradientStrength * gradientPreservation));
     }
 }
 
@@ -841,7 +955,7 @@ float3 ApplySubpixelProcessing(float3 originalColor, float3 processedColor, floa
 
 // Apply adaptive filtering based on edge type and pattern - using 24-factor multisampling
 float3 ApplyAdaptiveFiltering(float2 texcoord, float2 pixelSize, float edgeStrength, float2 edgeDirection,
-                              float isDirectional, float isCurved, bool hasPattern, int patternLength) {
+                              float isDirectional, float isCurved, bool hasPattern, int patternLength, bool isGradient, float gradientStrength) {
     float3 center = GetPixelColor(texcoord);
 
     // Early exit for non-edge pixels
@@ -979,9 +1093,11 @@ float4 PS_SHADE(float4 vpos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targ
     bool isNW_SE;
     bool isNE_SW;
     float isCurved;
+    bool isGradient;
+    float gradientStrength;
 
     // Perform advanced edge detection with depth compensation
-    AdvancedEdgeDetection(texcoord, pixelSize, depth, edgeStrength, edgeDirection, isDirectional, isNW_SE, isNE_SW, isCurved);
+    AdvancedEdgeDetection(texcoord, pixelSize, depth, edgeStrength, edgeDirection, isDirectional, isNW_SE, isNE_SW, isCurved, isGradient, gradientStrength);
 
     // Directly use REALISTIC.fx's approach - check if this is an edge at all
     if (edgeStrength < 0.05)
@@ -1168,6 +1284,18 @@ float4 PS_SHADE(float4 vpos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targ
         result = lerp(originalColor, blendedColor, blendFactor);
     }
 
+    // For gradients, we want to preserve more of the original color
+    if (isGradient) {
+        // Get gradient preservation strength from preset
+        float gradientPreservation = GetPresetGradientPreservation();
+
+        // Calculate blend factor based on gradient strength and preservation setting
+        float gradientBlend = gradientStrength * gradientPreservation;
+
+        // Blend more towards original color for strong gradients
+        result = lerp(result, originalColor, gradientBlend);
+    }
+
     // Apply panel-specific subpixel processing for the final output
     float3 finalColor = ApplySubpixelProcessing(originalColor, result, edgeDirection, edgeStrength, GetPresetPanelType());
 
@@ -1184,6 +1312,8 @@ float4 PS_SHADE(float4 vpos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targ
                 return float4(length(originalColor - finalColor) * 5.0, 0.0, 0.0, 1.0);
             case 4: // Depth Map
                 return float4(depth, depth, depth, 1.0);
+            case 5: // Gradient Detection
+                return float4(isGradient ? gradientStrength : 0.0, 0.0, isGradient ? 1.0 : 0.0, 1.0);
             default:
                 return float4(edgeStrength, 0.0, 0.0, 1.0);
         }
