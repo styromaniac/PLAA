@@ -129,6 +129,13 @@ uniform bool PreservePixelArt <
     ui_category = "Special Cases";
 > = true;
 
+uniform bool PreserveStars <
+    ui_type = "bool";
+    ui_label = "Preserve Stars";
+    ui_tooltip = "Preserves the appearance of single-pixel stars in night skies.";
+    ui_category = "Special Cases";
+> = true;
+
 uniform bool DebugView <
     ui_type = "bool";
     ui_label = "Debug View";
@@ -138,7 +145,7 @@ uniform bool DebugView <
 
 uniform int DebugMode <
     ui_type = "combo";
-    ui_items = "Edge Detection\0Pattern Recognition\0Curve Detection\0Filtering Intensity\0Depth Map\0Gradient Detection\0Performance Heat Map\0";
+    ui_items = "Edge Detection\0Pattern Recognition\0Curve Detection\0Filtering Intensity\0Depth Map\0Gradient Detection\0Star Detection\0";
     ui_label = "Debug Mode";
     ui_tooltip = "What to display when Debug View is enabled.";
     ui_category = "Debug";
@@ -308,6 +315,17 @@ bool GetPresetPreservePixelArt() {
             return true;
         default: // Custom
             return PreservePixelArt;
+    }
+}
+
+bool GetPresetPreserveStars() {
+    switch(DevicePreset) {
+        case 1: // Steam Deck LCD
+        case 2: // Steam Deck OLED (BOE)
+        case 3: // Steam Deck OLED LE (Samsung)
+            return true;
+        default: // Custom
+            return PreserveStars;
     }
 }
 
@@ -510,6 +528,90 @@ bool IsPixelArt(float2 texcoord, float2 pixelSize) {
     return (cornerCount >= 2) || hasHorizontalLine || hasVerticalLine;
 }
 
+// Function to detect if a pixel is likely a star (single bright pixel on dark background)
+bool IsLikelyStar(float2 texcoord, float2 pixelSize) {
+    // Sample a 3x3 grid around the current pixel
+    float3 center = GetPixelColor(texcoord);
+    float centerLuma = GetLuminance(center);
+
+    // Get surrounding pixels - use static array instead of loop for better compilation
+    float3 neighbors[8];
+    float neighborLuma[8];
+
+    // Manually unroll the loop for 8 surrounding neighbors
+    neighbors[0] = GetPixelColor(texcoord + float2(-1, -1) * pixelSize);
+    neighbors[1] = GetPixelColor(texcoord + float2( 0, -1) * pixelSize);
+    neighbors[2] = GetPixelColor(texcoord + float2( 1, -1) * pixelSize);
+    neighbors[3] = GetPixelColor(texcoord + float2(-1,  0) * pixelSize);
+    neighbors[4] = GetPixelColor(texcoord + float2( 1,  0) * pixelSize);
+    neighbors[5] = GetPixelColor(texcoord + float2(-1,  1) * pixelSize);
+    neighbors[6] = GetPixelColor(texcoord + float2( 0,  1) * pixelSize);
+    neighbors[7] = GetPixelColor(texcoord + float2( 1,  1) * pixelSize);
+
+    // Get luminance for each neighbor
+    neighborLuma[0] = GetLuminance(neighbors[0]);
+    neighborLuma[1] = GetLuminance(neighbors[1]);
+    neighborLuma[2] = GetLuminance(neighbors[2]);
+    neighborLuma[3] = GetLuminance(neighbors[3]);
+    neighborLuma[4] = GetLuminance(neighbors[4]);
+    neighborLuma[5] = GetLuminance(neighbors[5]);
+    neighborLuma[6] = GetLuminance(neighbors[6]);
+    neighborLuma[7] = GetLuminance(neighbors[7]);
+
+    // Calculate average surrounding luminance
+    float surroundingAvgLuma = (neighborLuma[0] + neighborLuma[1] + neighborLuma[2] + neighborLuma[3] +
+                               neighborLuma[4] + neighborLuma[5] + neighborLuma[6] + neighborLuma[7]) / 8.0;
+
+    // Find maximum surrounding luminance
+    float maxSurroundingLuma = max(max(max(neighborLuma[0], neighborLuma[1]),
+                                   max(neighborLuma[2], neighborLuma[3])),
+                                   max(max(neighborLuma[4], neighborLuma[5]),
+                                   max(neighborLuma[6], neighborLuma[7])));
+
+    // For faint stars, focus on relative brightness rather than absolute brightness
+
+    // Minimum brightness threshold - much lower for faint stars
+    const float starBrightnessThreshold = 0.05;
+
+    // Brightness ratio requirement (how much brighter the center is compared to surroundings)
+    // Using a lower threshold for the ratio for faint stars
+    const float brightnessRatioThreshold = 1.35;
+
+    // Calculate contrast ratio - center compared to surroundings
+    float contrastRatio = centerLuma / max(0.001, surroundingAvgLuma);
+
+    // Calculate how much brighter the center is compared to the brightest surrounding pixel
+    float peakBrightnessDiff = centerLuma - maxSurroundingLuma;
+
+    // For very faint stars, the relative brightness difference matters more than absolute values
+    // Check if the center is the local maximum brightness point
+    bool isLocalBrightnessMax = (centerLuma > maxSurroundingLuma);
+
+    // Count how many surrounding pixels are significantly darker
+    int darkerPixelCount = 0;
+    float relativeDarknessThreshold = centerLuma * 0.7; // 30% darker than center
+
+    darkerPixelCount += (neighborLuma[0] < relativeDarknessThreshold) ? 1 : 0;
+    darkerPixelCount += (neighborLuma[1] < relativeDarknessThreshold) ? 1 : 0;
+    darkerPixelCount += (neighborLuma[2] < relativeDarknessThreshold) ? 1 : 0;
+    darkerPixelCount += (neighborLuma[3] < relativeDarknessThreshold) ? 1 : 0;
+    darkerPixelCount += (neighborLuma[4] < relativeDarknessThreshold) ? 1 : 0;
+    darkerPixelCount += (neighborLuma[5] < relativeDarknessThreshold) ? 1 : 0;
+    darkerPixelCount += (neighborLuma[6] < relativeDarknessThreshold) ? 1 : 0;
+    darkerPixelCount += (neighborLuma[7] < relativeDarknessThreshold) ? 1 : 0;
+
+    // Check if this is likely a star:
+    // 1. Center must be above minimum brightness threshold
+    // 2. Center must be the brightest point locally
+    // 3. Center must be sufficiently brighter than surroundings
+    // 4. At least 6 surrounding pixels must be significantly darker
+
+    return (centerLuma > starBrightnessThreshold) &&
+           isLocalBrightnessMax &&
+           (contrastRatio > brightnessRatioThreshold) &&
+           (darkerPixelCount >= 6);
+}
+
 // Apply perspective compensation to filter parameters based on depth
 void ApplyPerspectiveCompensation(inout float edgeThreshold, inout float gapThreshold,
                                  inout float filterStrength, float depth) {
@@ -696,6 +798,11 @@ void AdvancedEdgeDetection(float2 texcoord, float2 pixelSize, float depth, out f
         edgeStrength *= 0.5; // Less reduction to maintain some effect on pixel art
     }
 
+    // For pixels detected as stars, greatly reduce edge strength to preserve them
+    if (GetPresetPreserveStars() && IsLikelyStar(texcoord, pixelSize)) {
+        edgeStrength *= 0.15; // Apply strong reduction to maintain star appearance
+    }
+
     // For pixels detected as gradients, reduce edge strength based on gradient preservation setting
     if (isGradient) {
         float gradientPreservation = GetPresetGradientPreservation();
@@ -705,12 +812,7 @@ void AdvancedEdgeDetection(float2 texcoord, float2 pixelSize, float depth, out f
 }
 
 // Detect repeating patterns and gaps for better aliasing detection
-// FIXED VERSION WITH ARRAY BOUNDS CHECKING
 bool DetectRepeatingPattern(float2 texcoord, float2 pixelSize, float2 direction, out int patternLength, out float patternStrength) {
-    // Initialize outputs
-    patternLength = 0;
-    patternStrength = 0.0;
-
     // Center pixel luminance
     float3 centerColor = GetPixelColor(texcoord);
     float centerLuma = GetLuminance(centerColor);
@@ -728,33 +830,29 @@ bool DetectRepeatingPattern(float2 texcoord, float2 pixelSize, float2 direction,
 
     // Determine max search steps based on quality setting
     int presetSamplingQuality = GetPresetSamplingQuality();
-    // FIX: Limit max steps to 30 (instead of 32) to prevent array bounds issues
-    int maxSteps = presetSamplingQuality == 0 ? 16 :
-                   presetSamplingQuality == 1 ? 24 : 30;
+    int maxSteps = presetSamplingQuality == 0 ? 16 : presetSamplingQuality == 1 ? 24 : 32;
 
-    // Store luminance values along the search path - fixed array size
-    float searchLuma[30]; // Can safely hold up to 30 elements
+    // Store luminance values along the search path
+    float searchLuma[32]; // Supports up to 32 steps (Ultra quality)
     searchLuma[0] = centerLuma;
 
-    // Search in positive direction with bounds checking
+    // Search in positive direction - use explicit unroll
     [unroll]
-    for (int i = 1; i < min(maxSteps / 2, 15); i++) { // Ensure we don't exceed array bounds
-        float2 samplePos = texcoord + perpDirection * i * pixelSize;
-        searchLuma[i] = GetLuminance(GetPixelColor(samplePos));
+    for (int i = 1; i < 16; i++) { // Use fixed constant for loop bound
+        if (i < maxSteps / 2) { // Runtime bounds check
+            float2 samplePos = texcoord + perpDirection * i * pixelSize;
+            searchLuma[i] = GetLuminance(GetPixelColor(samplePos));
+        }
     }
 
-    // Search in negative direction with bounds checking
+    // Search in negative direction
     [unroll]
-    for (int i = 1; i < min(maxSteps / 2, 15); i++) { // Ensure we don't exceed array bounds
-        float2 samplePos = texcoord - perpDirection * i * pixelSize;
-        searchLuma[i + maxSteps / 2] = GetLuminance(GetPixelColor(samplePos));
+    for (int i = 1; i < 16; i++) { // Use fixed constant for loop bound
+        if (i < maxSteps / 2) { // Runtime bounds check
+            float2 samplePos = texcoord - perpDirection * i * pixelSize;
+            searchLuma[i + maxSteps / 2] = GetLuminance(GetPixelColor(samplePos));
+        }
     }
-
-    // Configure gap threshold with adaptive adjustment
-    float adjustedGapThreshold = GetPresetGapThreshold();
-    float4 contrastInfo = GetLocalContrast(texcoord, pixelSize);
-    float localContrast = contrastInfo.x;
-    adjustedGapThreshold *= 1.0 - (GetPresetAdaptiveThreshold() * min(1.0, localContrast * 2.0));
 
     // Setup for detecting gaps (segments separated by color/luminance discontinuities)
     bool lastSimilar = true;
@@ -762,54 +860,139 @@ bool DetectRepeatingPattern(float2 texcoord, float2 pixelSize, float2 direction,
     int segmentCount = 1; // Start with center pixel as a segment
     float totalSegmentStrength = 0.0;
 
-    // Analyze the pattern - look for gaps and segments with bounds checking
+    // Configure gap threshold with adaptive adjustment
+    float adjustedGapThreshold = GetPresetGapThreshold();
+    float4 contrastInfo = GetLocalContrast(texcoord, pixelSize);
+    float localContrast = contrastInfo.x;
+    adjustedGapThreshold *= 1.0 - (GetPresetAdaptiveThreshold() * min(1.0, localContrast * 2.0));
+
+    // Analyze the pattern - look for gaps and segments
+    // Use explicit unroll
     [unroll]
-    for (int i = 1; i < min(maxSteps, 30); i++) { // Ensure we don't exceed array bounds
-        bool isSimilar = abs(searchLuma[i] - centerLuma) < adjustedGapThreshold;
+    for (int i = 1; i < 32; i++) {
+        // Add runtime bounds check to ensure loop runs correctly
+        if (i < maxSteps) {
+            bool isSimilar = abs(searchLuma[i] - centerLuma) < adjustedGapThreshold;
 
-        // Detect segment transitions (gap to segment or segment to gap)
-        if (isSimilar && !lastSimilar) {
-            // Found a new segment after a gap
-            segmentCount++;
-            totalSegmentStrength += abs(searchLuma[i] - searchLuma[i-1]);
-        }
-        else if (!isSimilar && lastSimilar) {
-            // Found a gap after a segment
-            gapCount++;
-        }
+            // Detect segment transitions (gap to segment or segment to gap)
+            if (isSimilar && !lastSimilar) {
+                // Found a new segment after a gap
+                segmentCount++;
+                totalSegmentStrength += abs(searchLuma[i] - searchLuma[i-1]);
+            }
+            else if (!isSimilar && lastSimilar) {
+                // Found a gap after a segment
+                gapCount++;
+            }
 
-        lastSimilar = isSimilar;
+            lastSimilar = isSimilar;
+        }
     }
 
-    // Check for equidistant transitions (characteristic of aliasing) with bounds checking
+    // Check for equidistant transitions (characteristic of aliasing)
     bool hasEquidistantPattern = false;
     int equidistantLength = 0;
 
-    // Try different pattern lengths
-    for (int testLength = 2; testLength <= 6; testLength++) {
-        int matches = 0;
-        float matchStrength = 0.0;
+    // Try different pattern lengths - use static unroll
+    int matches[5]; // For pattern lengths 2-6
+    float matchStrengths[5];
 
-        // Check if luminance values repeat at this interval with bounds checking
-        for (int i = 0; i < min(maxSteps - testLength, 24); i++) { // Ensure we don't exceed array bounds
-            if (abs(searchLuma[i] - searchLuma[i + testLength]) < adjustedGapThreshold * 2.0) {
-                matches++;
-                matchStrength += 1.0 - abs(searchLuma[i] - searchLuma[i + testLength]);
+    // Initialize counters
+    [unroll]
+    for (int t = 0; t < 5; t++) {
+        matches[t] = 0;
+        matchStrengths[t] = 0.0;
+    }
+
+    // Check each pattern length (2-6) - manually unrolled
+    // Pattern length 2
+    [unroll]
+    for (int i = 0; i < 30; i++) { // Use a safe fixed number
+        if (i < maxSteps - 2) {
+            if (abs(searchLuma[i] - searchLuma[i + 2]) < adjustedGapThreshold * 2.0) {
+                matches[0]++;
+                matchStrengths[0] += 1.0 - abs(searchLuma[i] - searchLuma[i + 2]);
             }
         }
+    }
 
-        // If we have enough matches, consider it a pattern
-        if (matches >= (min(maxSteps - testLength, 24)) / 3) { // Use bounded value for calculation
-            hasEquidistantPattern = true;
-            equidistantLength = testLength;
-            break;
+    // Pattern length 3
+    [unroll]
+    for (int i = 0; i < 29; i++) { // Use a safe fixed number
+        if (i < maxSteps - 3) {
+            if (abs(searchLuma[i] - searchLuma[i + 3]) < adjustedGapThreshold * 2.0) {
+                matches[1]++;
+                matchStrengths[1] += 1.0 - abs(searchLuma[i] - searchLuma[i + 3]);
+            }
         }
+    }
+
+    // Pattern length 4
+    [unroll]
+    for (int i = 0; i < 28; i++) { // Use a safe fixed number
+        if (i < maxSteps - 4) {
+            if (abs(searchLuma[i] - searchLuma[i + 4]) < adjustedGapThreshold * 2.0) {
+                matches[2]++;
+                matchStrengths[2] += 1.0 - abs(searchLuma[i] - searchLuma[i + 4]);
+            }
+        }
+    }
+
+    // Pattern length 5
+    [unroll]
+    for (int i = 0; i < 27; i++) { // Use a safe fixed number
+        if (i < maxSteps - 5) {
+            if (abs(searchLuma[i] - searchLuma[i + 5]) < adjustedGapThreshold * 2.0) {
+                matches[3]++;
+                matchStrengths[3] += 1.0 - abs(searchLuma[i] - searchLuma[i + 5]);
+            }
+        }
+    }
+
+    // Pattern length 6
+    [unroll]
+    for (int i = 0; i < 26; i++) { // Use a safe fixed number
+        if (i < maxSteps - 6) {
+            if (abs(searchLuma[i] - searchLuma[i + 6]) < adjustedGapThreshold * 2.0) {
+                matches[4]++;
+                matchStrengths[4] += 1.0 - abs(searchLuma[i] - searchLuma[i + 6]);
+            }
+        }
+    }
+
+    // Find the best pattern match
+    hasEquidistantPattern = false;
+    equidistantLength = 0;
+
+    // Test length 2
+    if (matches[0] >= (maxSteps - 2) / 3) {
+        hasEquidistantPattern = true;
+        equidistantLength = 2;
+    }
+    // Test length 3
+    else if (matches[1] >= (maxSteps - 3) / 3) {
+        hasEquidistantPattern = true;
+        equidistantLength = 3;
+    }
+    // Test length 4
+    else if (matches[2] >= (maxSteps - 4) / 3) {
+        hasEquidistantPattern = true;
+        equidistantLength = 4;
+    }
+    // Test length 5
+    else if (matches[3] >= (maxSteps - 5) / 3) {
+        hasEquidistantPattern = true;
+        equidistantLength = 5;
+    }
+    // Test length 6
+    else if (matches[4] >= (maxSteps - 6) / 3) {
+        hasEquidistantPattern = true;
+        equidistantLength = 6;
     }
 
     // Return results
     patternLength = hasEquidistantPattern ? equidistantLength : 0;
-    // FIX: Use unsigned integer division to avoid compiler warning
-    patternStrength = (segmentCount > 1) ? totalSegmentStrength / uint(segmentCount) : 0;
+    patternStrength = (segmentCount > 1) ? totalSegmentStrength / segmentCount : 0;
 
     // Pattern is valid if we have multiple segments or an equidistant pattern
     return (segmentCount >= 2 && gapCount >= 1) || hasEquidistantPattern;
@@ -949,7 +1132,7 @@ float3 ApplySubpixelProcessing(float3 originalColor, float3 processedColor, floa
     return saturate(result);
 }
 
-// Apply adaptive filtering based on edge type and pattern
+// Apply adaptive filtering based on edge type and pattern - using 24-factor multisampling
 float3 ApplyAdaptiveFiltering(float2 texcoord, float2 pixelSize, float edgeStrength, float2 edgeDirection,
                               float isDirectional, float isCurved, bool hasPattern, int patternLength, bool isGradient, float gradientStrength) {
     float3 center = GetPixelColor(texcoord);
@@ -957,178 +1140,125 @@ float3 ApplyAdaptiveFiltering(float2 texcoord, float2 pixelSize, float edgeStren
     // Early exit for non-edge pixels
     if (edgeStrength < 0.1) return center;
 
+    // Early exit for stars to preserve their appearance
+    if (GetPresetPreserveStars() && IsLikelyStar(texcoord, pixelSize))
+        return center;
+
     // Calculate filter strength based on edge characteristics
     float filterMult = GetPresetFilterStrength();
 
-    // Curved edges get special treatment
+    // Directional edges get equal treatment now
+    // No special boost for directional edges to ensure balanced processing
+
+    // Curved edges still get some special treatment but less extreme
     float curveFilterMult = 1.0;
-    if (isCurved > 0.5) curveFilterMult = 1.2; // Reduced from 1.5 to be more balanced
+    if (isCurved > 0.5) curveFilterMult = 1.2; // Reduced multiplier for more balanced processing
 
-    // Pattern-based adjustment
-    if (hasPattern) filterMult *= 1.2; // Reduced from 1.5 to be more balanced
+    // Pattern-based adjustment is more moderate
+    if (hasPattern) filterMult *= 1.2; // Reduced multiplier
 
-    // If it's a curved edge, use circular sampling
+    // Calculate perpendicular direction for sampling
+    float2 perpDirection = float2(-edgeDirection.y, edgeDirection.x);
+
+    // Determine number of samples based on quality setting
+    int presetSamplingQuality = GetPresetSamplingQuality();
+    int sampleCount = presetSamplingQuality == 0 ? 6 : presetSamplingQuality == 1 ? 8 : 12;
+
+    // If it's a curved edge, use circular sampling pattern with 24-factor optimization
     if (isCurved > 0.3) {
-        // For curves, use circular sampling with 12 directions (30 degree intervals)
+        float3 circularResult = float3(0, 0, 0);
+        float circularWeight = 0;
+
+        // Define circular sampling using 12 points (factor of 24)
         float3 circularSamples[12];
+        float circularWeights[12];
 
-        circularSamples[0] = GetPixelColor(texcoord + float2(0, -1) * pixelSize);                    // N
-        circularSamples[1] = GetPixelColor(texcoord + float2(0.5, -0.866) * pixelSize);              // NNE
-        circularSamples[2] = GetPixelColor(texcoord + float2(0.866, -0.5) * pixelSize);              // ENE
-        circularSamples[3] = GetPixelColor(texcoord + float2(1, 0) * pixelSize);                     // E
-        circularSamples[4] = GetPixelColor(texcoord + float2(0.866, 0.5) * pixelSize);               // ESE
-        circularSamples[5] = GetPixelColor(texcoord + float2(0.5, 0.866) * pixelSize);               // SSE
-        circularSamples[6] = GetPixelColor(texcoord + float2(0, 1) * pixelSize);                     // S
-        circularSamples[7] = GetPixelColor(texcoord + float2(-0.5, 0.866) * pixelSize);              // SSW
-        circularSamples[8] = GetPixelColor(texcoord + float2(-0.866, 0.5) * pixelSize);              // WSW
-        circularSamples[9] = GetPixelColor(texcoord + float2(-1, 0) * pixelSize);                    // W
-        circularSamples[10] = GetPixelColor(texcoord + float2(-0.866, -0.5) * pixelSize);            // WNW
-        circularSamples[11] = GetPixelColor(texcoord + float2(-0.5, -0.866) * pixelSize);            // NNW
-
-        // Create a weighted blend that favors smooth curves
-        float3 curveBlend = center * 0.4;
-
-        // Add circular samples with equal weights
+        // Sample in a circle around the pixel at 30-degree intervals
+        [unroll]
         for (int i = 0; i < 12; i++) {
-            curveBlend += circularSamples[i] * 0.05; // 12 samples * 0.05 = 0.6 total weight
+            float angle = radians(i * 30.0);
+            float2 dir = float2(cos(angle), sin(angle));
+
+            // Adaptive sampling distance based on curve strength
+            float sampleDist = 1.0 + isCurved * 0.5;
+
+            // Take sample
+            circularSamples[i] = GetPixelColor(texcoord + dir * pixelSize * sampleDist);
+
+            // Calculate weight based on similarity to center
+            float similarity = 1.0 - saturate(length(circularSamples[i] - center) * 2.0);
+            circularWeights[i] = similarity * similarity; // Square for stronger effect on similar pixels
+
+            // Add to weighted sum
+            circularResult += circularSamples[i] * circularWeights[i];
+            circularWeight += circularWeights[i];
         }
 
-        // Apply curve rounding based on curve strength
-        float blendFactor = saturate(edgeStrength * filterMult * curveFilterMult / 4.0);
-
-        // Apply the curve rounding
-        return lerp(center, curveBlend, blendFactor);
-    }
-    // Handle diagonal edges
-    else if (abs(edgeDirection.x * edgeDirection.y) > 0.3) {
-        // Direction perpendicular to the edge for sampling
-        float2 blendDir;
-
-        // Determine diagonal direction
-        if (abs(edgeDirection.x - edgeDirection.y) < abs(edgeDirection.x + edgeDirection.y)) {
-            // Direction perpendicular to NW-SE is NE-SW
-            blendDir = float2(-0.7071, 0.7071);
-        }
-        else {
-            // Direction perpendicular to NE-SW is NW-SE
-            blendDir = float2(0.7071, 0.7071);
-        }
-
-        // Using 8 samples (4 on each side)
-        float3 samples[8];
-
-        // Sample at fixed positions for consistent results
-        // Distance 0.5, 1.0, 2.0, 3.0 in each direction from center
-        samples[0] = GetPixelColor(texcoord + blendDir * pixelSize * 0.5);
-        samples[1] = GetPixelColor(texcoord - blendDir * pixelSize * 0.5);
-        samples[2] = GetPixelColor(texcoord + blendDir * pixelSize * 1.0);
-        samples[3] = GetPixelColor(texcoord - blendDir * pixelSize * 1.0);
-        samples[4] = GetPixelColor(texcoord + blendDir * pixelSize * 2.0);
-        samples[5] = GetPixelColor(texcoord - blendDir * pixelSize * 2.0);
-        samples[6] = GetPixelColor(texcoord + blendDir * pixelSize * 3.0);
-        samples[7] = GetPixelColor(texcoord - blendDir * pixelSize * 3.0);
-
-        // Calculate weights for samples
-        float lumaCenter = GetLuminance(center);
-
-        // Use more aggressive weighting to make the effect more visible
-        float3 blendedColor = center * 0.30; // Less weight on center pixel
-        float totalWeight = 0.30;
-
-        // Higher weights for close samples, but ensure total weights are higher
-        // for a more visible effect
-        float weight1 = 0.15 * saturate(1.0 - abs(GetLuminance(samples[0]) - lumaCenter) * 1.5);
-        float weight2 = 0.15 * saturate(1.0 - abs(GetLuminance(samples[1]) - lumaCenter) * 1.5);
-        float weight3 = 0.10 * saturate(1.0 - abs(GetLuminance(samples[2]) - lumaCenter) * 1.5);
-        float weight4 = 0.10 * saturate(1.0 - abs(GetLuminance(samples[3]) - lumaCenter) * 1.5);
-        float weight5 = 0.10 * saturate(1.0 - abs(GetLuminance(samples[4]) - lumaCenter) * 2.0);
-        float weight6 = 0.10 * saturate(1.0 - abs(GetLuminance(samples[5]) - lumaCenter) * 2.0);
-        float weight7 = 0.05 * saturate(1.0 - abs(GetLuminance(samples[6]) - lumaCenter) * 3.0);
-        float weight8 = 0.05 * saturate(1.0 - abs(GetLuminance(samples[7]) - lumaCenter) * 3.0);
-
-        // Add weighted samples to blended color
-        blendedColor += samples[0] * weight1;
-        blendedColor += samples[1] * weight2;
-        blendedColor += samples[2] * weight3;
-        blendedColor += samples[3] * weight4;
-        blendedColor += samples[4] * weight5;
-        blendedColor += samples[5] * weight6;
-        blendedColor += samples[6] * weight7;
-        blendedColor += samples[7] * weight8;
-
-        totalWeight += weight1 + weight2 + weight3 + weight4 + weight5 + weight6 + weight7 + weight8;
+        // Add center pixel to circular result
+        circularResult += center * 1.0;
+        circularWeight += 1.0;
 
         // Normalize
-        blendedColor /= max(0.3, totalWeight);
+        circularResult /= max(0.001, circularWeight);
 
-        // Calculate blend factor - more aggressive for visible effect
-        float blendFactor = saturate(edgeStrength * filterMult / 3.0);
-
-        // Apply smoothing with higher intensity
-        return lerp(center, blendedColor, blendFactor * 1.5);
+        // Blend with original based on curve strength
+        float blendFactor = saturate(edgeStrength * filterMult * curveFilterMult);
+        return lerp(center, circularResult, blendFactor);
     }
-    // Fallback for other edge types
-    else if (edgeStrength > 0.1) {
-        // Calculate perpendicular direction for sampling
-        float2 perpDir = float2(-edgeDirection.y, edgeDirection.x);
 
-        // Ensure this is a unit vector
-        float perpLength = length(perpDir);
-        if (perpLength > 0.0) {
-            perpDir /= perpLength;
-        } else {
-            perpDir = float2(1.0, 0.0);
+    // For regular edges, use directional sampling perpendicular to edge
+    // Using 24-factor optimization: 12 samples (6 pairs) gives excellent quality
+
+    // Store samples and weights
+    float3 samples[12];
+    float weights[12];
+    float totalWeight = 1.0; // Center weight
+
+    // Center sample with highest weight
+    float3 result = center * 1.0;
+
+    // Use adaptive spacing based on detected pattern
+    float spacing = (patternLength > 0) ? patternLength * 0.25 : 1.0;
+
+    // Take samples along perpendicular direction
+    // Use explicit unroll for more predictable results
+    [unroll]
+    for (int i = 0; i < 12; i++) {
+        // Use if condition to enforce loop bounds at runtime
+        if (i < sampleCount) {
+            // Calculate sample position with progressive spacing
+            float dist = spacing * (i + 1) / float(sampleCount); // Use float division
+
+            // Positive and negative direction samples
+            samples[i] = GetPixelColor(texcoord + perpDirection * dist * pixelSize);
+            samples[i + sampleCount] = GetPixelColor(texcoord - perpDirection * dist * pixelSize);
+
+            // Calculate weights based on distance and similarity
+            float distanceFactor = 1.0 - saturate(dist / 4.0);
+
+            // Similarity weight calculation
+            float similarity1 = 1.0 - saturate(length(samples[i] - center) * 2.0);
+            float similarity2 = 1.0 - saturate(length(samples[i + sampleCount] - center) * 2.0);
+
+            // Final weights combining distance and similarity
+            weights[i] = distanceFactor * distanceFactor * similarity1 * similarity1;
+            weights[i + sampleCount] = distanceFactor * distanceFactor * similarity2 * similarity2;
+
+            // Add to weighted sum
+            result += samples[i] * weights[i];
+            result += samples[i + sampleCount] * weights[i + sampleCount];
+            totalWeight += weights[i] + weights[i + sampleCount];
         }
-
-        // Use a similar approach to diagonal edges but with calculated perpendicular direction
-        float3 samples[8];
-
-        samples[0] = GetPixelColor(texcoord + perpDir * pixelSize * 0.5);
-        samples[1] = GetPixelColor(texcoord - perpDir * pixelSize * 0.5);
-        samples[2] = GetPixelColor(texcoord + perpDir * pixelSize * 1.0);
-        samples[3] = GetPixelColor(texcoord - perpDir * pixelSize * 1.0);
-        samples[4] = GetPixelColor(texcoord + perpDir * pixelSize * 2.0);
-        samples[5] = GetPixelColor(texcoord - perpDir * pixelSize * 2.0);
-        samples[6] = GetPixelColor(texcoord + perpDir * pixelSize * 3.0);
-        samples[7] = GetPixelColor(texcoord - perpDir * pixelSize * 3.0);
-
-        // Calculate weights
-        float lumaCenter = GetLuminance(center);
-
-        float3 blendedColor = center * 0.30; // Less weight on center pixel
-        float totalWeight = 0.30;
-
-        float weight1 = 0.15 * saturate(1.0 - abs(GetLuminance(samples[0]) - lumaCenter) * 1.5);
-        float weight2 = 0.15 * saturate(1.0 - abs(GetLuminance(samples[1]) - lumaCenter) * 1.5);
-        float weight3 = 0.10 * saturate(1.0 - abs(GetLuminance(samples[2]) - lumaCenter) * 1.5);
-        float weight4 = 0.10 * saturate(1.0 - abs(GetLuminance(samples[3]) - lumaCenter) * 1.5);
-        float weight5 = 0.10 * saturate(1.0 - abs(GetLuminance(samples[4]) - lumaCenter) * 2.0);
-        float weight6 = 0.10 * saturate(1.0 - abs(GetLuminance(samples[5]) - lumaCenter) * 2.0);
-        float weight7 = 0.05 * saturate(1.0 - abs(GetLuminance(samples[6]) - lumaCenter) * 3.0);
-        float weight8 = 0.05 * saturate(1.0 - abs(GetLuminance(samples[7]) - lumaCenter) * 3.0);
-
-        // Add weighted samples to blended color
-        blendedColor += samples[0] * weight1;
-        blendedColor += samples[1] * weight2;
-        blendedColor += samples[2] * weight3;
-        blendedColor += samples[3] * weight4;
-        blendedColor += samples[4] * weight5;
-        blendedColor += samples[5] * weight6;
-        blendedColor += samples[6] * weight7;
-        blendedColor += samples[7] * weight8;
-
-        totalWeight += weight1 + weight2 + weight3 + weight4 + weight5 + weight6 + weight7 + weight8;
-
-        // Normalize
-        blendedColor /= max(0.3, totalWeight);
-
-        // Less aggressive blending for non-diagonal edges
-        float blendFactor = saturate(edgeStrength * filterMult / 4.0);
-
-        return lerp(center, blendedColor, blendFactor);
     }
 
-    return center;
+    // Normalize result
+    result /= totalWeight;
+
+    // Calculate blend factor based on edge strength and filter multiplier
+    float blendFactor = saturate(edgeStrength * filterMult / 5.0); // Reduced divisor for stronger blending effect
+
+    // Return filtered result
+    return lerp(center, result, blendFactor);
 }
 
 // Main processing pixel shader
@@ -1165,10 +1295,181 @@ float4 PS_SHADE(float4 vpos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targ
     float patternStrength;
     bool hasPattern = DetectRepeatingPattern(texcoord, pixelSize, edgeDirection, patternLength, patternStrength);
 
-    // Apply adaptive filtering based on edge characteristics
-    float3 result = ApplyAdaptiveFiltering(texcoord, pixelSize, edgeStrength, edgeDirection,
-                                          isDirectional, isCurved, hasPattern, patternLength,
-                                          isGradient, gradientStrength);
+    // Using an approach similar to REALISTIC.fx's direct diagonal detection and smoothing
+    float3 result = originalColor;
+
+    // Calculate filter strength based on edge characteristics
+    float filterMult = GetPresetFilterStrength();
+
+    // All edge types get equal priority - no stronger filtering for diagonals or directional edges
+    // Just use base filter strength with some adjustment for curved edges and patterns
+
+    // Curved edges get special treatment
+    float curveFilterMult = 1.0;
+    if (isCurved > 0.5) curveFilterMult = 1.2; // Reduced from 1.5 to be more balanced
+
+    // Pattern-based adjustment
+    if (hasPattern) filterMult *= 1.2; // Reduced from 1.5 to be more balanced
+
+    // If it's a curved edge, use circular sampling
+    if (isCurved > 0.3) {
+        // For curves, use circular sampling with 12 directions (30 degree intervals)
+        float3 circularSamples[12];
+
+        circularSamples[0] = GetPixelColor(texcoord + float2(0, -1) * pixelSize);                    // N
+        circularSamples[1] = GetPixelColor(texcoord + float2(0.5, -0.866) * pixelSize);              // NNE
+        circularSamples[2] = GetPixelColor(texcoord + float2(0.866, -0.5) * pixelSize);              // ENE
+        circularSamples[3] = GetPixelColor(texcoord + float2(1, 0) * pixelSize);                     // E
+        circularSamples[4] = GetPixelColor(texcoord + float2(0.866, 0.5) * pixelSize);               // ESE
+        circularSamples[5] = GetPixelColor(texcoord + float2(0.5, 0.866) * pixelSize);               // SSE
+        circularSamples[6] = GetPixelColor(texcoord + float2(0, 1) * pixelSize);                     // S
+        circularSamples[7] = GetPixelColor(texcoord + float2(-0.5, 0.866) * pixelSize);              // SSW
+        circularSamples[8] = GetPixelColor(texcoord + float2(-0.866, 0.5) * pixelSize);              // WSW
+        circularSamples[9] = GetPixelColor(texcoord + float2(-1, 0) * pixelSize);                    // W
+        circularSamples[10] = GetPixelColor(texcoord + float2(-0.866, -0.5) * pixelSize);            // WNW
+        circularSamples[11] = GetPixelColor(texcoord + float2(-0.5, -0.866) * pixelSize);            // NNW
+
+        // Create a weighted blend that favors smooth curves
+        float3 curveBlend = originalColor * 0.4;
+
+        // Add circular samples with equal weights
+        for (int i = 0; i < 12; i++) {
+            curveBlend += circularSamples[i] * 0.05; // 12 samples * 0.05 = 0.6 total weight
+        }
+
+        // Apply curve rounding based on curve strength
+        float blendFactor = saturate(edgeStrength * filterMult * curveFilterMult / 4.0);
+
+        // Apply the curve rounding
+        result = lerp(originalColor, curveBlend, blendFactor);
+    }
+    // Handle diagonal edges - this is where REALISTIC.fx's visible effect comes from
+    else if (isNW_SE || isNE_SW) {
+        // Direction perpendicular to the edge for sampling
+        float2 blendDir;
+
+        if (isNW_SE) {
+            // Direction perpendicular to NW-SE is NE-SW
+            blendDir = float2(-0.7071, 0.7071);
+        }
+        else { // isNE_SW
+            // Direction perpendicular to NE-SW is NW-SE
+            blendDir = float2(0.7071, 0.7071);
+        }
+
+        // Using REALISTIC.fx's sampling approach with 8 samples (4 on each side)
+        float3 samples[8];
+
+        // Sample at fixed positions for consistent results
+        // Distance 0.5, 1.0, 2.0, 3.0 in each direction from center
+        samples[0] = GetPixelColor(texcoord + blendDir * pixelSize * 0.5);
+        samples[1] = GetPixelColor(texcoord - blendDir * pixelSize * 0.5);
+        samples[2] = GetPixelColor(texcoord + blendDir * pixelSize * 1.0);
+        samples[3] = GetPixelColor(texcoord - blendDir * pixelSize * 1.0);
+        samples[4] = GetPixelColor(texcoord + blendDir * pixelSize * 2.0);
+        samples[5] = GetPixelColor(texcoord - blendDir * pixelSize * 2.0);
+        samples[6] = GetPixelColor(texcoord + blendDir * pixelSize * 3.0);
+        samples[7] = GetPixelColor(texcoord - blendDir * pixelSize * 3.0);
+
+        // Calculate weights for samples
+        float lumaCenter = GetLuminance(originalColor);
+
+        // Use more aggressive weighting to make the effect more visible
+        float3 blendedColor = originalColor * 0.30; // Less weight on center pixel
+        float totalWeight = 0.30;
+
+        // Higher weights for close samples, but ensure total weights are higher
+        // for a more visible effect
+        float weight1 = 0.15 * saturate(1.0 - abs(GetLuminance(samples[0]) - lumaCenter) * 1.5);
+        float weight2 = 0.15 * saturate(1.0 - abs(GetLuminance(samples[1]) - lumaCenter) * 1.5);
+        float weight3 = 0.10 * saturate(1.0 - abs(GetLuminance(samples[2]) - lumaCenter) * 1.5);
+        float weight4 = 0.10 * saturate(1.0 - abs(GetLuminance(samples[3]) - lumaCenter) * 1.5);
+        float weight5 = 0.10 * saturate(1.0 - abs(GetLuminance(samples[4]) - lumaCenter) * 2.0);
+        float weight6 = 0.10 * saturate(1.0 - abs(GetLuminance(samples[5]) - lumaCenter) * 2.0);
+        float weight7 = 0.05 * saturate(1.0 - abs(GetLuminance(samples[6]) - lumaCenter) * 3.0);
+        float weight8 = 0.05 * saturate(1.0 - abs(GetLuminance(samples[7]) - lumaCenter) * 3.0);
+
+        // Add weighted samples to blended color
+        blendedColor += samples[0] * weight1;
+        blendedColor += samples[1] * weight2;
+        blendedColor += samples[2] * weight3;
+        blendedColor += samples[3] * weight4;
+        blendedColor += samples[4] * weight5;
+        blendedColor += samples[5] * weight6;
+        blendedColor += samples[6] * weight7;
+        blendedColor += samples[7] * weight8;
+
+        totalWeight += weight1 + weight2 + weight3 + weight4 + weight5 + weight6 + weight7 + weight8;
+
+        // Normalize
+        blendedColor /= max(0.3, totalWeight);
+
+        // Calculate blend factor - more aggressive for visible effect
+        float blendFactor = saturate(edgeStrength * filterMult / 3.0);
+
+        // Apply smoothing with higher intensity
+        result = lerp(originalColor, blendedColor, blendFactor * 1.5);
+    }
+    // Fallback for other edge types
+    else if (edgeStrength > 0.1) {
+        // Calculate perpendicular direction for sampling
+        float2 perpDir = float2(-edgeDirection.y, edgeDirection.x);
+
+        // Ensure this is a unit vector
+        float perpLength = length(perpDir);
+        if (perpLength > 0.0) {
+            perpDir /= perpLength;
+        } else {
+            perpDir = float2(1.0, 0.0);
+        }
+
+        // Use a similar approach to diagonal edges but with calculated perpendicular direction
+        float3 samples[8];
+
+        samples[0] = GetPixelColor(texcoord + perpDir * pixelSize * 0.5);
+        samples[1] = GetPixelColor(texcoord - perpDir * pixelSize * 0.5);
+        samples[2] = GetPixelColor(texcoord + perpDir * pixelSize * 1.0);
+        samples[3] = GetPixelColor(texcoord - perpDir * pixelSize * 1.0);
+        samples[4] = GetPixelColor(texcoord + perpDir * pixelSize * 2.0);
+        samples[5] = GetPixelColor(texcoord - perpDir * pixelSize * 2.0);
+        samples[6] = GetPixelColor(texcoord + perpDir * pixelSize * 3.0);
+        samples[7] = GetPixelColor(texcoord - perpDir * pixelSize * 3.0);
+
+        // Calculate weights
+        float lumaCenter = GetLuminance(originalColor);
+
+        float3 blendedColor = originalColor * 0.30; // Less weight on center pixel
+        float totalWeight = 0.30;
+
+        float weight1 = 0.15 * saturate(1.0 - abs(GetLuminance(samples[0]) - lumaCenter) * 1.5);
+        float weight2 = 0.15 * saturate(1.0 - abs(GetLuminance(samples[1]) - lumaCenter) * 1.5);
+        float weight3 = 0.10 * saturate(1.0 - abs(GetLuminance(samples[2]) - lumaCenter) * 1.5);
+        float weight4 = 0.10 * saturate(1.0 - abs(GetLuminance(samples[3]) - lumaCenter) * 1.5);
+        float weight5 = 0.10 * saturate(1.0 - abs(GetLuminance(samples[4]) - lumaCenter) * 2.0);
+        float weight6 = 0.10 * saturate(1.0 - abs(GetLuminance(samples[5]) - lumaCenter) * 2.0);
+        float weight7 = 0.05 * saturate(1.0 - abs(GetLuminance(samples[6]) - lumaCenter) * 3.0);
+        float weight8 = 0.05 * saturate(1.0 - abs(GetLuminance(samples[7]) - lumaCenter) * 3.0);
+
+        // Add weighted samples to blended color
+        blendedColor += samples[0] * weight1;
+        blendedColor += samples[1] * weight2;
+        blendedColor += samples[2] * weight3;
+        blendedColor += samples[3] * weight4;
+        blendedColor += samples[4] * weight5;
+        blendedColor += samples[5] * weight6;
+        blendedColor += samples[6] * weight7;
+        blendedColor += samples[7] * weight8;
+
+        totalWeight += weight1 + weight2 + weight3 + weight4 + weight5 + weight6 + weight7 + weight8;
+
+        // Normalize
+        blendedColor /= max(0.3, totalWeight);
+
+        // Less aggressive blending for non-diagonal edges
+        float blendFactor = saturate(edgeStrength * filterMult / 4.0);
+
+        result = lerp(originalColor, blendedColor, blendFactor);
+    }
 
     // For gradients, we want to preserve more of the original color
     if (isGradient) {
@@ -1181,6 +1482,10 @@ float4 PS_SHADE(float4 vpos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targ
         // Blend more towards original color for strong gradients
         result = lerp(result, originalColor, gradientBlend);
     }
+
+    // Early exit for stars to preserve their appearance
+    if (GetPresetPreserveStars() && IsLikelyStar(texcoord, pixelSize))
+        return float4(originalColor, 1.0);
 
     // Apply panel-specific subpixel processing for the final output
     float3 finalColor = ApplySubpixelProcessing(originalColor, result, edgeDirection, edgeStrength, GetPresetPanelType());
@@ -1200,11 +1505,8 @@ float4 PS_SHADE(float4 vpos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targ
                 return float4(depth, depth, depth, 1.0);
             case 5: // Gradient Detection
                 return float4(isGradient ? gradientStrength : 0.0, 0.0, isGradient ? 1.0 : 0.0, 1.0);
-            case 6: // Performance Heat Map
-                // Calculate processing cost heuristic
-                float cost = edgeStrength * (isCurved > 0.3 ? 1.5 : 1.0) * (hasPattern ? 1.2 : 1.0);
-                // Red = expensive, Green = cheap
-                return float4(saturate(cost), saturate(1.0 - cost), 0.0, 1.0);
+            case 6: // Star Detection
+                return float4(IsLikelyStar(texcoord, pixelSize) ? 1.0 : 0.0, 0.0, 0.0, 1.0);
             default:
                 return float4(edgeStrength, 0.0, 0.0, 1.0);
         }
