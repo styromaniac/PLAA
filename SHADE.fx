@@ -24,14 +24,6 @@ uniform float EdgeDetectionThreshold <
     ui_category = "Edge Detection";
 > = 0.30;
 
-uniform float DiagonalDetectionBias <
-    ui_type = "slider";
-    ui_min = 1.0; ui_max = 10.0; ui_step = 0.1;
-    ui_label = "Diagonal Detection Bias";
-    ui_tooltip = "Higher values enhance detection of diagonal edges.";
-    ui_category = "Edge Detection";
-> = 8.0;
-
 uniform float FilterStrength <
     ui_type = "slider";
     ui_min = 0.5; ui_max = 15.0; ui_step = 0.1;
@@ -181,14 +173,8 @@ float GetPresetGradientPreservation() {
 }
 
 float GetPresetDiagonalBias() {
-    switch(DevicePreset) {
-        case 1: // Steam Deck LCD
-        case 2: // Steam Deck OLED (BOE)
-        case 3: // Steam Deck OLED LE (Samsung)
-            return 8.0;
-        default: // Custom
-            return DiagonalDetectionBias;
-    }
+    // Return a neutral value (1.0) to ensure all edge directions are treated equally
+    return 1.0;
 }
 
 float GetPresetFilterStrength() {
@@ -617,9 +603,8 @@ void AdvancedEdgeDetection(float2 texcoord, float2 pixelSize, float depth, out f
     gNE_SW += gNESW_alt * 0.5;
     gNW_SE += gNWSE_alt * 0.5;
 
-    // Apply diagonal bias to enhance diagonal detection
-    gNE_SW *= GetPresetDiagonalBias();
-    gNW_SE *= GetPresetDiagonalBias();
+    // Treat all edge directions equally - don't apply any bias
+    // This ensures equal treatment to all edge types
 
     // Calculate overall gradient magnitude
     float gHV = sqrt(gx*gx + gy*gy);  // Horizontal/vertical magnitude
@@ -627,7 +612,10 @@ void AdvancedEdgeDetection(float2 texcoord, float2 pixelSize, float depth, out f
 
     // Calculate edge strength and direction
     float maxGradient = max(gHV, gDiag);
-    edgeStrength = maxGradient / (20.0 * adjustedEdgeThreshold); // Normalize with adjusted threshold - lower divisor for stronger effect
+
+    // Ensure edge detection is balanced between all edge types
+    float edgeBalance = (gHV + gDiag) * 0.5;
+    edgeStrength = edgeBalance / (20.0 * adjustedEdgeThreshold); // Normalize with adjusted threshold
 
     // Set the diagonal direction flags directly
     isNW_SE = abs(gNW_SE) > abs(gNE_SW);
@@ -964,15 +952,15 @@ float3 ApplyAdaptiveFiltering(float2 texcoord, float2 pixelSize, float edgeStren
     // Calculate filter strength based on edge characteristics
     float filterMult = GetPresetFilterStrength();
 
-    // Directional edges get stronger filtering
-    if (isDirectional > 0.7) filterMult *= 1.2;
+    // Directional edges get equal treatment now
+    // No special boost for directional edges to ensure balanced processing
 
-    // Curved edges get special treatment
+    // Curved edges still get some special treatment but less extreme
     float curveFilterMult = 1.0;
-    if (isCurved > 0.5) curveFilterMult = 1.5;
+    if (isCurved > 0.5) curveFilterMult = 1.2; // Reduced multiplier for more balanced processing
 
-    // Pattern-based adjustment
-    if (hasPattern) filterMult *= 1.3;
+    // Pattern-based adjustment is more moderate
+    if (hasPattern) filterMult *= 1.2; // Reduced multiplier
 
     // Calculate perpendicular direction for sampling
     float2 perpDirection = float2(-edgeDirection.y, edgeDirection.x);
@@ -1114,15 +1102,15 @@ float4 PS_SHADE(float4 vpos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targ
     // Calculate filter strength based on edge characteristics
     float filterMult = GetPresetFilterStrength();
 
-    // Directional edges get stronger filtering
-    if (isDirectional > 0.7) filterMult *= 1.5;
+    // All edge types get equal priority - no stronger filtering for diagonals or directional edges
+    // Just use base filter strength with some adjustment for curved edges and patterns
 
     // Curved edges get special treatment
     float curveFilterMult = 1.0;
-    if (isCurved > 0.5) curveFilterMult = 1.5;
+    if (isCurved > 0.5) curveFilterMult = 1.2; // Reduced from 1.5 to be more balanced
 
     // Pattern-based adjustment
-    if (hasPattern) filterMult *= 1.5;
+    if (hasPattern) filterMult *= 1.2; // Reduced from 1.5 to be more balanced
 
     // If it's a curved edge, use circular sampling
     if (isCurved > 0.3) {
