@@ -167,14 +167,10 @@ float ColorDifference(float3 c1, float3 c2)
 
 //------------------------------------------------------------------------------
 // 4) Local Variance Functions
-//   Just as before, but now we can do a depth-based or color-based approach if desired
-//   For demonstration, let's keep them color-luminance-based or depth-luminance-based?
-//   Here, we'll keep it color-luminance-based like the original, though you could do depth.
 //------------------------------------------------------------------------------
 float ComputeLocalVariance3x3(float2 uv, float2 pixelSize)
 {
-    float sumLum = 0.0;
-    float sumLumSq = 0.0;
+    float sumLum = 0.0, sumLumSq = 0.0;
     const int k = 1; // => 3x3
 
     [unroll]
@@ -196,7 +192,6 @@ float ComputeLocalVariance3x3(float2 uv, float2 pixelSize)
     return meanSq - (mean * mean);
 }
 
-// Expand to 5x5, 7x7, etc. ...
 float ComputeLocalVariance5x5(float2 uv, float2 pixelSize)
 {
     float sumLum = 0.0, sumLumSq = 0.0;
@@ -318,11 +313,10 @@ float ComputeEdgeMaskLuminance(float2 uv, float2 pixelSize)
     float lumB  = GetLuminance(b);
     float lumBR = GetLuminance(br);
 
-    float gx = -lumTL - 2.0*lumL - lumBL + lumTR + 2.0*lumR + lumBR;
-    float gy = -lumTL - 2.0*lumT - lumTR + lumBL + 2.0*lumB + lumBR;
+    float gx = -lumTL - 2.0 * lumL - lumBL + lumTR + 2.0 * lumR + lumBR;
+    float gy = -lumTL - 2.0 * lumT - lumTR + lumBL + 2.0 * lumB + lumBR;
     float gradMag = length(float2(gx, gy));
 
-    // Scale
     return saturate(gradMag * 4.0);
 }
 
@@ -341,7 +335,6 @@ float ComputeEdgeMaskColor(float2 uv, float2 pixelSize)
     float3 b  = GetPixelColor(uv + pixelSize * float2( 0,  1));
     float3 br = GetPixelColor(uv + pixelSize * float2( 1,  1));
 
-    // Luminance sobel
     float lumTL = GetLuminance(tl);
     float lumT  = GetLuminance(t);
     float lumTR = GetLuminance(tr);
@@ -352,11 +345,10 @@ float ComputeEdgeMaskColor(float2 uv, float2 pixelSize)
     float lumB  = GetLuminance(b);
     float lumBR = GetLuminance(br);
 
-    float gx = -lumTL - 2.0*lumL - lumBL + lumTR + 2.0*lumR + lumBR;
-    float gy = -lumTL - 2.0*lumT - lumTR + lumBL + 2.0*lumB + lumBR;
+    float gx = -lumTL - 2.0 * lumL - lumBL + lumTR + 2.0 * lumR + lumBR;
+    float gy = -lumTL - 2.0 * lumT - lumTR + lumBL + 2.0 * lumB + lumBR;
     float gradMag = length(float2(gx, gy));
 
-    // Color difference
     float colorDiff = 0.0;
     colorDiff = max(colorDiff, ColorDifference(c, l));
     colorDiff = max(colorDiff, ColorDifference(c, r));
@@ -368,19 +360,13 @@ float ComputeEdgeMaskColor(float2 uv, float2 pixelSize)
 }
 
 //------------------------------------------------------------------------------
-// 7) Hybrid
+// 7) Hybrid Edge Mask
 //------------------------------------------------------------------------------
 float ComputeEdgeMaskHybrid(float2 uv, float2 pixelSize)
 {
     float lumMask   = ComputeEdgeMaskLuminance(uv, pixelSize);
     float colorMask = ComputeEdgeMaskColor(uv, pixelSize);
-
-    // Weighted combine
-    float lumWeight   = 0.5;
-    float colorWeight = 0.5;
-
-    float sum = lumMask * lumWeight + colorMask * colorWeight;
-    return saturate(sum);
+    return saturate(lumMask * 0.5 + colorMask * 0.5);
 }
 
 //------------------------------------------------------------------------------
@@ -388,9 +374,9 @@ float ComputeEdgeMaskHybrid(float2 uv, float2 pixelSize)
 //------------------------------------------------------------------------------
 float ComputeEdgeMask(float2 uv, float2 pixelSize)
 {
-    if (EdgeMode == 0) // Luminance
+    if (EdgeMode == 0)
         return ComputeEdgeMaskLuminance(uv, pixelSize);
-    else if (EdgeMode == 1) // Color
+    else if (EdgeMode == 1)
         return ComputeEdgeMaskColor(uv, pixelSize);
     else
         return ComputeEdgeMaskHybrid(uv, pixelSize);
@@ -402,15 +388,12 @@ float ComputeEdgeMask(float2 uv, float2 pixelSize)
 float3 ApplyAntiAliasing(float2 uv, float2 pixelSize, float2 edgeDir, float edgeMask)
 {
     float2 perp = float2(-edgeDir.y, edgeDir.x);
-
     float3 centerCol   = GetPixelColor(uv);
     float3 neighborCol = GetPixelColor(uv + perp * pixelSize);
 
-    // Blend factor
     float lower = EdgeDetectionThreshold;
     float upper = EdgeDetectionThreshold * 2.0;
     float t = smoothstep(lower, upper, edgeMask);
-
     t = min(t, MaxBlend);
     float blendFactor = t * FilterStrength * 0.1;
 
@@ -434,46 +417,40 @@ float3 ApplyDeviceSpecificProcessing(float3 original, float3 aaColor)
 }
 
 //------------------------------------------------------------------------------
-// 11) Main Pixel Shader
+// 11) Main Pixel Shader with Conditional Variance Computation
 //------------------------------------------------------------------------------
 float3 PS_VectorSeek(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 {
     float2 pixelSize = ReShade::PixelSize;
     float3 originalColor = GetPixelColor(uv);
-
-    // Choose local variance function
-    float localVariance = 0.0;
-    if      (SamplingQuality == 0) localVariance = ComputeLocalVariance3x3(uv, pixelSize);
-    else if (SamplingQuality == 1) localVariance = ComputeLocalVariance5x5(uv, pixelSize);
-    else if (SamplingQuality == 2) localVariance = ComputeLocalVariance7x7(uv, pixelSize);
-    else if (SamplingQuality == 3) localVariance = ComputeLocalVariance9x9(uv, pixelSize);
-    else                           localVariance = ComputeLocalVariance13x13(uv, pixelSize);
-
     float rawEdgeMask = ComputeEdgeMask(uv, pixelSize);
-
     bool weakEdge = (rawEdgeMask < EdgeDetectionThreshold);
 
-    // Skip AA if edge is weak
+    // Early exit if the edge is weak.
     if (weakEdge)
     {
         if (DebugView)
         {
-            // DebugMode: 0=Edge Mask, 1=Variance, 2=Blending Factor
-            if (DebugMode == 0) return float3(0.0, 0.0, 0.0);    // Edge Mask
-            else if (DebugMode == 1)                           // Variance
+            if (DebugMode == 1)
             {
+                // Compute local variance only when needed for debug.
+                float localVariance = (SamplingQuality == 0) ? ComputeLocalVariance3x3(uv, pixelSize) :
+                                       (SamplingQuality == 1) ? ComputeLocalVariance5x5(uv, pixelSize) :
+                                       (SamplingQuality == 2) ? ComputeLocalVariance7x7(uv, pixelSize) :
+                                       (SamplingQuality == 3) ? ComputeLocalVariance9x9(uv, pixelSize) :
+                                                                ComputeLocalVariance13x13(uv, pixelSize);
                 float varVis = localVariance * 50.0;
                 return float3(varVis, varVis, varVis);
             }
-            else if (DebugMode == 2)                           // Blending Factor
-            {
+            else if (DebugMode == 0)
+                return float3(rawEdgeMask, rawEdgeMask, rawEdgeMask);
+            else if (DebugMode == 2)
                 return float3(0.0, 0.0, 0.0);
-            }
         }
         return originalColor;
     }
 
-    // Approx edge direction from luminance difference
+    // Compute edge direction.
     float3 lfCol = GetPixelColor(uv + pixelSize * float2(-1, 0));
     float3 rtCol = GetPixelColor(uv + pixelSize * float2( 1, 0));
     float3 upCol = GetPixelColor(uv + pixelSize * float2( 0,-1));
@@ -483,20 +460,25 @@ float3 PS_VectorSeek(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
     float gy = GetLuminance(dnCol) - GetLuminance(upCol);
     float2 edgeDir = normalize(float2(gx, gy) + 1e-8);
 
-    float3 aaColor   = ApplyAntiAliasing(uv, pixelSize, edgeDir, rawEdgeMask);
+    float3 aaColor = ApplyAntiAliasing(uv, pixelSize, edgeDir, rawEdgeMask);
     float3 finalColor = ApplyDeviceSpecificProcessing(originalColor, aaColor);
 
-    // Debug
+    // Debug output for non-weak edges.
     if (DebugView)
     {
-        if (DebugMode == 0) // Edge Mask
+        if (DebugMode == 0)
             return float3(rawEdgeMask, rawEdgeMask, rawEdgeMask);
-        else if (DebugMode == 1) // Variance
+        else if (DebugMode == 1)
         {
+            float localVariance = (SamplingQuality == 0) ? ComputeLocalVariance3x3(uv, pixelSize) :
+                                   (SamplingQuality == 1) ? ComputeLocalVariance5x5(uv, pixelSize) :
+                                   (SamplingQuality == 2) ? ComputeLocalVariance7x7(uv, pixelSize) :
+                                   (SamplingQuality == 3) ? ComputeLocalVariance9x9(uv, pixelSize) :
+                                                            ComputeLocalVariance13x13(uv, pixelSize);
             float varVis = localVariance * 50.0;
             return float3(varVis, varVis, varVis);
         }
-        else if (DebugMode == 2) // Blending Factor
+        else if (DebugMode == 2)
         {
             float lower = EdgeDetectionThreshold;
             float upper = EdgeDetectionThreshold * 2.0;
@@ -507,7 +489,6 @@ float3 PS_VectorSeek(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
         }
     }
 
-    // Normal rendering if not debugging
     return finalColor;
 }
 
