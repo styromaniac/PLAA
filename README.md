@@ -55,9 +55,6 @@ Open the ReShade overlay to adjust these parameters:
 - **Edge Detection Threshold**  
   Determines how strong an edge must be before AA applies.
 
-- **Flatness Threshold**  
-  Skips smoothing for near-uniform regions above this variance level.
-
 - **Max Edge Blend**  
   Caps the maximum blend factor to avoid excessive blur.
 
