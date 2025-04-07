@@ -1,108 +1,69 @@
 # MyVectorSeek
 
-A **single-pass anti-aliasing (AA)** shader for ReShade that offers multiple sampling quality levels—from *Standard* to **God Mode (768)**. Originally inspired by the idea of combining luminance-based edge detection with a simple one-directional blur, this shader has been extended to feature:
+A **single-pass anti-aliasing** (AA) effect for ReShade that offers multiple kernel sizes, from a modest **3×3** to a **ridiculously** big **25×25** “God Mode.”  
 
-- **Device Preset** tweaks (Steam Deck LCD, OLED, etc.)  
-- Various **edge detection** thresholds and blending controls  
-- **Local variance** checks to skip near-uniform areas  
-- Multiple sampling modes:
-  - Standard / High / Ultra
-  - Insane (96)
-  - Ludicrous (192)
-  - Ridiculous (384)
-  - God Mode (768)
+## What It Does
 
-> **Note:** The numerical labels (96, 192, 384, 768) do not precisely match the exact tap counts. They are humorous references for the size or complexity of the sampling kernel, which can be quite large in extreme modes.
+MyVectorSeek tries to smooth out edges by:
+
+1. Checking local **variance** in a small (or gigantic) neighborhood.  
+2. Calculating a **Sobel-like** gradient and **color difference** to detect edges.  
+3. Blending across those edges in a perpendicular direction.
+
+**Disclaimer**: This is a fun, experimental approach. Don’t expect it to surpass advanced techniques like TAA or SMAA, especially in the extreme modes that can hammer performance without providing proportionally better image quality.
 
 ---
 
-## How to Install
+## Modes & Performance
 
-1. **Install ReShade**  
-   - Download and run the ReShade setup from [reshade.me](https://reshade.me/).  
-   - Select the game or application you want to use with ReShade.  
-   - Choose a graphics API (typically DirectX 9, 10/11/12, OpenGL, or Vulkan).  
-   - Allow ReShade to install its default shaders or skip if you only want to use custom effects.
+- **Standard / High / Ultra** (Index 0,1,2)  
+  - Use a **3×3** kernel. Fastest and simplest.  
+- **Insane (96)** (Index 3)  
+  - 5×5 kernel. Slightly bigger overhead.  
+- **Ludicrous (192)** (Index 4)  
+  - 9×9 kernel. May hit performance harder.  
+- **Ridiculous (384)** (Index 5)  
+  - 13×13 kernel. Guaranteed frame rate hit at higher resolutions.  
+- **God Mode (768)** (Index 6)  
+  - 25×25 kernel (625 taps). Absolutely destroys performance in many cases.
 
-2. **Place the Shader File**  
-   - Copy `MyVectorSeek.fx` into your ReShade `\Shaders\` folder (where ReShade looks for `.fx` files).  
-   - If you’re not sure where that folder is, open the ReShade in-game menu, go to the *Settings* tab, and check the “Effect Search Paths.”
-
-3. **Activate the Effect**  
-   - Launch your game/application with ReShade.  
-   - Press the configured ReShade hotkey (e.g., `Home`) to open the overlay.  
-   - Under the *Home* or *Add-ons* tab, find **MyVectorSeek** or a similar named effect in the list.  
-   - Check the box next to it to enable.
-
-4. **Tweak Settings**  
-   - Use the ReShade UI to adjust *FilterStrength*, *EdgeDetectionThreshold*, *SamplingQuality*, and other parameters.  
-   - Toggle *Debug View* to see intermediate masks or variance data.
+> ### Why the weird numbers (96, 192, 384, 768)?
+> They’re mostly comedic references to indicate bigger leaps in sampling cost. The actual tap counts for each kernel differ (5×5=25, 9×9=81, 13×13=169, 25×25=625).  
 
 ---
 
-## Shader Parameters
+## Installation
 
-| Name                          | Description                                                                                                       |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| **DevicePreset**              | A preset combo box for certain device tweaks (e.g., Steam Deck LCD, Steam Deck OLED). Adjusts final color slightly. |
-| **FilterStrength**            | Controls the intensity of the AA blending. Higher values = stronger blur.                                        |
-| **EdgeDetectionThreshold**    | Luminance threshold for identifying edges.                                                                        |
-| **FlatnessThreshold**         | Variance threshold to skip near-uniform areas (prevents overblurring).                                           |
-| **MaxBlend**                  | Caps how much blending can be applied to each edge.                                                               |
-| **GradientPreservationStrength** | Placeholder for additional gradient logic (not fully implemented).                                              |
-| **SamplingQuality**           | Combo box ranging from Standard to God Mode. Higher modes use larger local variance kernels (3×3 → 25×25).        |
-| **CurveDetectionStrength**    | Placeholder for future curved-edge logic (not fully implemented).                                                |
-| **DebugView** and **DebugMode** | Visualize the edge mask, variance, or blending factor, instead of final color.                                    |
+1. Install **[ReShade](https://reshade.me/)**.  
+2. Place **MyVectorSeek.fx** in your ReShade `\Shaders\` folder.  
+3. Launch your game, open ReShade, enable **MyVectorSeek** in the effect list.  
 
 ---
 
-## Performance Considerations
+## Usage
 
-- **Large Kernels**  
-  The “Insane,” “Ludicrous,” “Ridiculous,” and especially “God Mode (768)” modes use big sampling kernels (5×5 → 25×25). This can heavily impact performance on higher resolutions.
-- **Resolution Impact**  
-  Using *Ridiculous* or *God Mode* at 4K or above may lead to significant FPS drops unless you have a very powerful GPU.  
-  Consider using lower screen resolutions or dynamic resolution scaling when playing with these extreme modes.
-
----
-
-## Troubleshooting
-
-1. **Shader Not Showing Up**  
-   - Confirm the `.fx` file is in a folder that ReShade is scanning for shaders (see *Settings* tab in ReShade).
-   - Ensure the effect is not overshadowed by other post-processing or incorrectly sorted in the load order.
-
-2. **No Visible AA Effect**  
-   - Increase `FilterStrength`, lower `EdgeDetectionThreshold`, and disable other AA effects to clearly see MyVectorSeek’s impact.
-   - Check if *DebugView* is turned on. If it’s in a debug mode, you won’t see final colors.
-
-3. **Excessive Blur or Artifacts**  
-   - Try reducing `FilterStrength` or `MaxBlend`.
-   - Lower the sampling quality back to *Standard* or *High* for less aggressive sampling.
+1. In the ReShade overlay, look for the **MyVectorSeek** section.  
+2. Pick a **Sampling Quality**. “God Mode” is purely for the daring (and those with GPUs to spare).  
+3. Adjust:
+   - **FilterStrength** for how strong the blend is.  
+   - **EdgeDetectionThreshold** to catch more or fewer edges.  
+   - **MaxBlend** if things look too smeared.  
+   - **FlatnessThreshold** to skip uniform areas.  
+4. (Optional) **DebugView** can display intermediate data (edge mask, variance, etc.).
 
 ---
 
-## Contributing
+## Known Limitations
 
-Feel free to fork this shader, submit pull requests, or tweak settings to improve performance or quality. Some ideas for future expansions include:
-
-- Better **curve detection** logic using additional partial derivative checks.  
-- Enhanced **temporal stability** or combining with a velocity buffer (though that typically goes beyond single-pass ReShade).  
-- More sophisticated color-based methods in addition to the Sobel operator.
+- The large kernels might not meaningfully reduce aliasing in many real-world cases, but they will definitely reduce your frame rate.  
+- This approach doesn’t track motion or rely on additional buffers, so it’s not temporal. Edges might still flicker in fast motion.  
+- Some color banding or smearing may appear on high-contrast geometry, especially if `FilterStrength` is set very high.
 
 ---
 
-## License
+## Credits & License
 
-This shader is provided as-is, with no specific license attached. You are free to use, modify, and redistribute it for personal or non-commercial purposes. If you republish or bundle it, please give credit to the original authors or contributors.
+- **Original concept** by [Your Name], with thanks to the ReShade community for code snippets and feedback.  
+- Provided **as-is**, free for personal or non-commercial use. Feel free to modify or adapt it to your needs. If you redistribute, a small credit is appreciated.
 
----
-
-## Credits
-
-- [ReShade](https://reshade.me/) for the post-processing framework.  
-- All community members who tested or contributed ideas for advanced AA kernels and edge detection.
-
----
-
-**Enjoy testing out the extremes from *Standard* all the way to *God Mode (768)*—but be mindful of your FPS!**
+> **Have fun trying out “God Mode,” but don’t say we didn’t warn you about the performance meltdown!**
