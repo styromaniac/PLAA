@@ -1,119 +1,109 @@
 # MyVectorSeek
 
-A **single-pass anti-aliasing (AA)** shader for ReShade, featuring **five** distinct sampling quality modes. This shader combines luminance-based edge detection with a simple directional blend to reduce jagged edges in a single pass.
-
----
+MyVectorSeek is a single-pass anti-aliasing (AA) shader for ReShade designed to provide flexible edge detection while minimizing unwanted blurring of UI text and overlays. The shader supports multiple edge detection modes and sampling quality settings, along with depth clamping options for improved compatibility with various games. It is backward‐compatible with ReShade 6.x, using updated HLSL syntax (with `tex2D(...)` calls).
 
 ## Features
 
-1. **Device Preset** tweaks (Steam Deck LCD, OLED, etc.) to slightly adapt final color.  
-2. **Edge Detection Thresholds** to selectively smooth only where needed.  
-3. **Local Variance** checks to skip near-uniform areas.  
-4. **Five** sampling modes, each with a **unique** kernel size:
+- **Edge Detection Modes**  
+  Choose between three edge detection strategies:
+  - **Luminance:** Uses a Sobel operator on luminance (brightness) only. Ideal for sparing text that differs primarily in color.
+  - **Color:** Uses a Sobel operator combined with a color difference metric to capture all visible edges.
+  - **Hybrid:** Merges luminance and color-based methods for balanced edge detection in 3D scenes.
 
-   | Mode         | Kernel Size | Taps  |
-   | ------------ | ----------- | ----- |
-   | **Standard** | 3×3         | 9     |
-   | **High**     | 5×5         | 25    |
-   | **Ultra**    | 7×7         | 49    |
-   | **Insane**   | 9×9         | 81    |
-   | **Ludicrous**| 13×13       | 169   |
+- **Sampling Quality Modes**  
+  Five distinct local variance sampling modes determine how many neighboring pixels are sampled:
+  - **Standard:** 3×3 kernel (9 taps)
+  - **High Quality:** 5×5 kernel (25 taps)
+  - **Ultra Quality:** 7×7 kernel (49 taps)
+  - **Insane:** 9×9 kernel (81 taps)
+  - **Ludicrous:** 13×13 kernel (169 taps)
 
-5. **Debug View** options to visualize the edge mask, variance, or blend factor.
+- **Depth Min/Max Sliders**  
+  Fine-tune how the shader interprets the depth buffer with customizable minimum and maximum depth values. This helps adapt the shader to games with unusual depth ranges or reversed depth.
 
----
+- **Device Presets**  
+  Adjust final color processing for various devices (e.g., Steam Deck LCD, OLED variants) to optimize the AA effect for your display type.
+
+- **Debug Modes**  
+  Three debug output modes are available to visualize internal computations:
+  - **Edge Mask:** Displays the computed edge detection mask.
+  - **Variance:** Shows the local variance used in sampling.
+  - **Blending Factor:** Visualizes the blend factor used in the final AA step.
+
+- **Backward Compatibility**  
+  The shader uses updated HLSL syntax with `tex2D(...)` calls to ensure compatibility with ReShade 6.4.1 and newer.
 
 ## Installation
 
-1. **Install ReShade**  
-   - Download and run the ReShade setup from [reshade.me](https://reshade.me/).  
-   - Select your game or application, choose the applicable rendering API (e.g., DX11, DX12, Vulkan, etc.), and finish the installer.
+1. **Install ReShade:**  
+   Download and run the latest ReShade installer from [reshade.me](https://reshade.me/). Select your game’s executable and the appropriate graphics API (usually DirectX).
 
-2. **Copy the Shader File**  
-   - Place `MyVectorSeek.fx` into your ReShade `\Shaders\` folder.  
-   - If you’re unsure of the location, open the ReShade overlay in-game and check the *Settings* tab for “Effect Search Paths.”
+2. **Copy the Shader:**  
+   Place `MyVectorSeek.fx` in your ReShade `Shaders` folder (e.g., `...\reshade\Shaders\`).
 
-3. **Enable the Effect**  
-   - Launch your game/app with ReShade active.  
-   - Open the ReShade menu (commonly bound to the `Home` key).  
-   - In the *Home* or *Add-ons* tab, locate **MyVectorSeek**.  
-   - Check the box to load and apply the effect.
-
----
+3. **Configure ReShade:**  
+   - Open your game and bring up the ReShade overlay.
+   - Enable depth buffer access (check options such as “Copy depth buffer before clear”).
+   - Verify that your shader is loaded via the ReShade menu.
 
 ## Usage
 
-Open the ReShade overlay to adjust these parameters:
+- **Edge Detection Mode:**  
+  Use the `EdgeMode` dropdown to select:
+  - **Luminance:** Best for sparing text that has similar brightness.
+  - **Color:** Captures edges based on color differences (may blur text more).
+  - **Hybrid:** A balanced approach that combines both methods.
 
-- **Sampling Quality**  
-  - **Standard (3×3)** → **Ludicrous (13×13)**.  
-  - Larger kernels provide stronger AA at a higher performance cost.
+- **Sampling Quality:**  
+  Choose the desired sampling quality mode from Standard to Ludicrous. Higher-quality modes sample more taps, improving edge detection in uniform areas but requiring more GPU resources.
 
-- **Filter Strength**  
-  Controls how aggressively edges are blended (0.1–10.0).
+- **Depth Min/Max:**  
+  Adjust the `DepthMin` and `DepthMax` sliders if your game’s depth values require clamping to a 0–1 range for optimal edge detection.
 
-- **Edge Detection Threshold**  
-  Determines how strong an edge must be before AA applies.
+- **Device Preset:**  
+  Select a preset to slightly adjust the final color blend based on your display characteristics.
 
-- **Flatness Threshold**  
-  Skips smoothing for near-uniform regions above this variance level.
+- **Debug Mode:**  
+  Enable `DebugView` and select a debug mode (Edge Mask, Variance, or Blending Factor) to visualize internal edge detection and sampling data.
 
-- **Max Edge Blend**  
-  Caps the maximum blend factor to avoid excessive blur.
+## Parameters
 
-- **Debug View**  
-  Toggle between final output and debug modes (e.g., edge mask, variance, blend factor).
-
-### Device Preset
-
-Pick from:
-- **Custom Settings**  
-- **Steam Deck LCD**  
-- **Steam Deck OLED**  
-- **Steam Deck OLED LE**
-
-to slightly modify the final blended color. This is mostly a placeholder to demonstrate device-specific adjustments.
-
----
-
-## Performance Considerations
-
-- **Higher Kernels**  
-  **Ludicrous (13×13)** can be quite expensive at higher resolutions.  
-- **Balance**  
-  If performance is an issue, switch to **Standard (3×3)** or **High (5×5)** for lighter GPU usage.
-
----
+| Parameter                      | Description                                                                                                                   |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| **DevicePreset**               | Device-specific color processing preset (Custom Settings, Steam Deck LCD, OLED variants).                                     |
+| **FilterStrength**             | Overall strength of the AA effect (higher values yield stronger blending).                                                   |
+| **EdgeDetectionThreshold**     | Threshold for detecting edges; higher values ignore subtle edges.                                                            |
+| **FlatnessThreshold**          | Threshold for skipping AA in near-uniform areas.                                                                             |
+| **MaxBlend**                   | Maximum blend factor applied to edges.                                                                                       |
+| **GradientPreservationStrength** | (Placeholder) Intended to preserve smooth gradients.                                                                      |
+| **SamplingQuality**            | Determines the kernel size for local variance calculations (affects the AA effect in uniform regions).                       |
+| **CurveDetectionStrength**     | (Placeholder) For future curved edge detection improvements.                                                                |
+| **EdgeMode**                   | Select between Luminance, Color, or Hybrid edge detection methods.                                                           |
+| **DepthMin / DepthMax**        | Clamp depth values from the depth buffer to a 0–1 range for optimal edge detection.                                          |
+| **DebugView / DebugMode**      | Enable and choose the debug output mode (Edge Mask, Variance, Blending Factor) to visualize intermediate processing stages. |
 
 ## Troubleshooting
 
-- **Shader Not Appearing**  
-  - Verify `MyVectorSeek.fx` is placed in a recognized shader folder (see ReShade’s *Settings* tab).  
-  - Make sure the effect is checked and enabled in the ReShade UI.
+- **Text Blurring:**  
+  If text appears blurred, try switching to the **Luminance** edge mode, increasing the `EdgeDetectionThreshold`, or reducing `FilterStrength`/`MaxBlend`.
 
-- **Excessive Blur**  
-  - Lower `FilterStrength`, or choose a smaller kernel (e.g., Standard or High).  
-  - Increase `EdgeDetectionThreshold` to reduce how many edges are blended.
+- **Performance Issues:**  
+  Higher sampling quality modes (e.g., Insane, Ludicrous) require more GPU resources. Lower the mode if you experience performance drops.
 
-- **No Visual Difference**  
-  - Check if *DebugView* is on – you might be seeing masks rather than the final AA result.  
-  - Reduce `FlatnessThreshold` so it doesn’t skip too many areas.
-
----
-
-## Contributing
-
-Feel free to fork or modify the shader. Potential expansions include:
-- More sophisticated **curved edge** logic.  
-- **Temporal** methods for added stability.  
-- Additional **color-based** weighting for edge detection.
-
----
+- **Depth Issues:**  
+  If the depth buffer isn’t providing useful data, adjust the `DepthMin` and `DepthMax` values or try a different edge mode.
 
 ## License
 
-No specific license. You are free to use, adapt, and distribute this shader for personal or non-commercial purposes. If you redistribute it, please give credit to the original authors/contributors.
+This shader is licensed under the GNU Affero General Public License v3.0. You are free to use, modify, and distribute it, but any modified versions must also be released under the same license.
+
+For more details, see the [GNU AGPL v3.0 license](https://www.gnu.org/licenses/agpl-3.0.html).
+
+## Credits
+
+- [ReShade](https://reshade.me/) for the post-processing framework.
+- Community members for feedback and contributions that helped refine this shader.
 
 ---
 
-**Enjoy MyVectorSeek and choose the sampling mode that best fits your performance and visual quality needs!**
+Enjoy the flexibility of three edge detection modes, fine-tuning options, and backward compatibility with modern ReShade versions!
