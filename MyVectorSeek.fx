@@ -2,12 +2,19 @@
 // MyVectorSeek.fx - Single-Pass AA using Depth Gradients and Text(ure) Preservation
 //
 // Features:
-// - Depth-based Sobel edge detection exclusively (to preserve flat OSD text).
-// - Local variance computed from the depth buffer (5 quality modes).
+// - Uses depth-based Sobel edge detection exclusively to preserve OSD text.
+// - Local variance is computed from the depth buffer.
 // - DepthMin/DepthMax sliders clamp the depth values.
-// - DepthEdgeScale scales the sensitivity of depth gradients.
+// - DepthEdgeScale adjusts the sensitivity of depth gradients.
 // - TextPreservationStrength reduces blending in smooth (low-curvature) areas.
-// - Device-specific color adjustments and debug modes (Edge Mask, Variance, Blending Factor).
+// - 6 Sampling Quality modes:
+//     0) Standard (3x3 - 9 taps)
+//     1) High Quality (5x5 - 25 taps)
+//     2) Ultra Quality (7x7 - 49 taps)
+//     3) Insane (9x9 - 81 taps)
+//     4) Ludicrous (13x13 - 169 taps)
+//     5) God Mode (25x25 - 625 taps)
+// - Debug mode: only "Edge Mask" is available (the final render is the normal output).
 // - License: GNU AGPL v3.0
 //------------------------------------------------------------------------------
 #include "ReShade.fxh"
@@ -51,7 +58,7 @@ uniform float MaxBlend <
     ui_tooltip = "Clamp on how strongly edges get blended.";
 > = 0.7;
 
-// Renamed for text preservation—reduces blending in smooth (low-curvature) areas.
+// Renamed for text preservation—reduces blending in smooth areas.
 uniform float TextPreservationStrength <
     ui_type = "slider";
     ui_min = 0.0; ui_max = 1.0; ui_step = 0.05;
@@ -60,12 +67,13 @@ uniform float TextPreservationStrength <
 > = 0.70;
 
 /*
-    SamplingQuality: 5 modes for local variance (based on depth):
-      0) Standard (3×3 => 9 taps)
-      1) High Quality (5×5 => 25 taps)
-      2) Ultra Quality (7×7 => 49 taps)
-      3) Insane (9×9 => 81 taps)
-      4) Ludicrous (13×13 => 169 taps)
+    SamplingQuality: 6 modes for local variance (depth-based):
+      0) Standard (3x3 - 9 taps)
+      1) High Quality (5x5 - 25 taps)
+      2) Ultra Quality (7x7 - 49 taps)
+      3) Insane (9x9 - 81 taps)
+      4) Ludicrous (13x13 - 169 taps)
+      5) God Mode (25x25 - 625 taps)
 */
 uniform int SamplingQuality <
     ui_type = "combo";
@@ -74,7 +82,8 @@ uniform int SamplingQuality <
         "High Quality (5x5 - 25 taps)\0"
         "Ultra Quality (7x7 - 49 taps)\0"
         "Insane (9x9 - 81 taps)\0"
-        "Ludicrous (13x13 - 169 taps)\0";
+        "Ludicrous (13x13 - 169 taps)\0"
+        "God Mode (25x25 - 625 taps)\0";
     ui_label = "Sampling Quality";
     ui_tooltip = "Choose the sampling quality.";
 > = 0;
@@ -82,18 +91,16 @@ uniform int SamplingQuality <
 uniform bool DebugView <
     ui_type = "bool";
     ui_label = "Debug View";
-    ui_tooltip = "Show debug output (Edge Mask, Variance, or Blending Factor).";
+    ui_tooltip = "Show debug output (Edge Mask).";
 > = false;
 
 /*
-    DebugMode (Final Color debug mode removed):
+    DebugMode: Only one debug mode remains.
       0 = Edge Mask
-      1 = Variance
-      2 = Blending Factor
 */
 uniform int DebugMode <
     ui_type = "combo";
-    ui_items = "Edge Mask\0Variance\0Blending Factor\0";
+    ui_items = "Edge Mask\0";
     ui_label = "Debug Mode";
     ui_tooltip = "Select debug output.";
 > = 0;
@@ -144,11 +151,22 @@ float3 GetPixelColor(float2 uv)
     return tex2D(samplerColor, uv).rgb;
 }
 
-// Get depth from the depth texture, clamped to [0,1] using DepthMin/DepthMax.
+// Depth sampling with clamping
 float GetDepth(float2 uv)
 {
     float d = tex2D(samplerDepth, uv).r;
     return saturate((d - DepthMin) / (DepthMax - DepthMin));
+}
+
+float GetLuminance(float3 c)
+{
+    return dot(c, float3(0.299, 0.587, 0.114));
+}
+
+float ColorDifference(float3 c1, float3 c2)
+{
+    float3 diff = abs(c1 - c2);
+    return max(max(diff.r, diff.g), diff.b);
 }
 
 //------------------------------------------------------------------------------
@@ -234,6 +252,22 @@ float ComputeLocalVariance13x13(float2 uv, float2 pixelSize)
     return (sumDSq / area) - (mean * mean);
 }
 
+float ComputeLocalVariance25x25(float2 uv, float2 pixelSize)
+{
+    float sumD = 0.0, sumDSq = 0.0;
+    const int k = 12; // 2k+1 = 25
+    [unroll] for (int y = -k; y <= k; y++)
+        [unroll] for (int x = -k; x <= k; x++)
+        {
+            float d = GetDepth(uv + pixelSize * float2(x, y));
+            sumD += d;
+            sumDSq += d * d;
+        }
+    float area = (2 * k + 1) * (2 * k + 1);
+    float mean = sumD / area;
+    return (sumDSq / area) - (mean * mean);
+}
+
 //------------------------------------------------------------------------------
 // 5) Depth-Based Edge Detection
 //------------------------------------------------------------------------------
@@ -271,7 +305,7 @@ float ComputeDepthCurvature(float2 uv)
 //------------------------------------------------------------------------------
 float3 ApplyAntiAliasing(float2 uv, float2 pixelSize, float2 edgeDir, float edgeMask)
 {
-    float2 perp = float2(-edgeDir.y, edgeDir.x);
+    float2 perp = float2(-edgeDir.y, -edgeDir.x);
     float3 centerCol = GetPixelColor(uv);
     float3 neighborCol = GetPixelColor(uv + perp * pixelSize);
 
@@ -317,7 +351,8 @@ float3 PS_VectorSeek(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
     else if (SamplingQuality == 1) localVariance = ComputeLocalVariance5x5(uv, pixelSize);
     else if (SamplingQuality == 2) localVariance = ComputeLocalVariance7x7(uv, pixelSize);
     else if (SamplingQuality == 3) localVariance = ComputeLocalVariance9x9(uv, pixelSize);
-    else                           localVariance = ComputeLocalVariance13x13(uv, pixelSize);
+    else if (SamplingQuality == 4) localVariance = ComputeLocalVariance13x13(uv, pixelSize);
+    else                             localVariance = ComputeLocalVariance25x25(uv, pixelSize);
 
     float rawEdgeMask = ComputeEdgeMaskDepth(uv, pixelSize);
 
@@ -329,14 +364,7 @@ float3 PS_VectorSeek(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
         if (DebugView)
         {
             if (DebugMode == 0)
-                return float3(0.0, 0.0, 0.0);
-            else if (DebugMode == 1)
-            {
-                float varVis = localVariance * 50.0;
-                return float3(varVis, varVis, varVis);
-            }
-            else if (DebugMode == 2)
-                return float3(0.0, 0.0, 0.0);
+                return float3(rawEdgeMask, rawEdgeMask, rawEdgeMask);
         }
         return originalColor;
     }
@@ -355,20 +383,6 @@ float3 PS_VectorSeek(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
     {
         if (DebugMode == 0)
             return float3(rawEdgeMask, rawEdgeMask, rawEdgeMask);
-        else if (DebugMode == 1)
-        {
-            float varVis = localVariance * 50.0;
-            return float3(varVis, varVis, varVis);
-        }
-        else if (DebugMode == 2)
-        {
-            float lower = EdgeDetectionThreshold;
-            float upper = EdgeDetectionThreshold * 2.0;
-            float t = smoothstep(lower, upper, rawEdgeMask);
-            t = min(t, MaxBlend);
-            float blendFactor = t * FilterStrength * 0.1;
-            return float3(blendFactor, blendFactor, blendFactor);
-        }
     }
     return finalColor;
 }
