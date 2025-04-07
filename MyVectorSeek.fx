@@ -30,13 +30,6 @@ uniform float EdgeDetectionThreshold <
     ui_tooltip = "Threshold for detecting edges.";
 > = 0.10;
 
-uniform float FlatnessThreshold <
-    ui_type = "slider";
-    ui_min = 0.0; ui_max = 0.02; ui_step = 0.001;
-    ui_label = "Flatness Threshold";
-    ui_tooltip = "Variance threshold for near-uniform areas.";
-> = 0.005;
-
 uniform float MaxBlend <
     ui_type = "slider";
     ui_min = 0.0; ui_max = 1.0; ui_step = 0.05;
@@ -458,11 +451,10 @@ float3 PS_VectorSeek(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 
     float rawEdgeMask = ComputeEdgeMask(uv, pixelSize);
 
-    bool lowVariance = (localVariance < FlatnessThreshold);
-    bool weakEdge    = (rawEdgeMask < EdgeDetectionThreshold);
+    bool weakEdge = (rawEdgeMask < EdgeDetectionThreshold);
 
-    // Skip
-    if (weakEdge || (lowVariance && rawEdgeMask < (EdgeDetectionThreshold * 2.0)))
+    // Skip AA if edge is weak
+    if (weakEdge)
     {
         if (DebugView)
         {
@@ -499,7 +491,6 @@ float3 PS_VectorSeek(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
     {
         if (DebugMode == 0) // Edge Mask
             return float3(rawEdgeMask, rawEdgeMask, rawEdgeMask);
-
         else if (DebugMode == 1) // Variance
         {
             float varVis = localVariance * 50.0;
