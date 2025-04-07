@@ -1,6 +1,6 @@
 # MyVectorSeek
 
-A **single-pass anti-aliasing (AA)** shader for ReShade, featuring **five** distinct sampling quality modes. This shader combines luminance-based edge detection and simple directional blending to achieve improved edge smoothing in a single pass.
+A **single-pass anti-aliasing (AA)** shader for ReShade, featuring **five** distinct sampling quality modes. This shader combines luminance-based edge detection with a simple directional blend to reduce jagged edges in a single pass.
 
 ---
 
@@ -9,7 +9,7 @@ A **single-pass anti-aliasing (AA)** shader for ReShade, featuring **five** dist
 1. **Device Preset** tweaks (Steam Deck LCD, OLED, etc.) to slightly adapt final color.  
 2. **Edge Detection Thresholds** to selectively smooth only where needed.  
 3. **Local Variance** checks to skip near-uniform areas.  
-4. **Five** sampling modes, each with unique kernel sizes:
+4. **Five** sampling modes, each with a **unique** kernel size:
 
    | Mode         | Kernel Size | Taps  |
    | ------------ | ----------- | ----- |
@@ -26,19 +26,18 @@ A **single-pass anti-aliasing (AA)** shader for ReShade, featuring **five** dist
 ## Installation
 
 1. **Install ReShade**  
-   - Download the latest ReShade from [reshade.me](https://reshade.me/).  
-   - Follow the setup wizard for your game or application.  
-   - Choose the appropriate rendering API (DirectX9, DirectX10/11/12, Vulkan, OpenGL, etc.).  
+   - Download and run the ReShade setup from [reshade.me](https://reshade.me/).  
+   - Select your game or application, choose the applicable rendering API (e.g., DX11, DX12, Vulkan, etc.), and finish the installer.
 
-2. **Place the Shader File**  
-   - Copy `MyVectorSeek.fx` into your ReShade `\Shaders\` folder.  
-   - If you don’t know that folder location, open the ReShade menu in-game and check the *Settings* tab for the “Effect Search Paths.”
+2. **Copy the Shader File**  
+   - Place `MyVectorSeek.fx` into your ReShade `\Shaders\` folder.  
+   - If you’re unsure of the location, open the ReShade overlay in-game and check the *Settings* tab for “Effect Search Paths.”
 
-3. **Enable the Shader**  
-   - Run your game/application with ReShade active.  
-   - Press `Home` (or your configured hotkey) to open the ReShade overlay.  
+3. **Enable the Effect**  
+   - Launch your game/app with ReShade active.  
+   - Open the ReShade menu (commonly bound to the `Home` key).  
    - In the *Home* or *Add-ons* tab, locate **MyVectorSeek**.  
-   - Check its box to load and apply the effect.
+   - Check the box to load and apply the effect.
 
 ---
 
@@ -47,67 +46,74 @@ A **single-pass anti-aliasing (AA)** shader for ReShade, featuring **five** dist
 Open the ReShade overlay to adjust these parameters:
 
 - **Sampling Quality**  
-  Choose from Standard (3×3) to Ludicrous (13×13). Each mode increases the number of taps, improving AA at the cost of performance.
+  - **Standard (3×3)** → **Ludicrous (13×13)**.  
+  - Larger kernels provide stronger AA at a higher performance cost.
 
 - **Filter Strength**  
-  Controls how strongly edges are blended. Higher values mean more blurring.
+  Controls how aggressively edges are blended (0.1–10.0).
 
 - **Edge Detection Threshold**  
-  Lower values detect more edges (potentially over-blurring). Higher values require stronger edges before applying AA.
+  Determines how strong an edge must be before AA applies.
 
 - **Flatness Threshold**  
-  Skips smoothing for near-uniform regions. Lower values allow smoothing everywhere; higher values reduce smoothing in plain areas.
+  Skips smoothing for near-uniform regions above this variance level.
 
 - **Max Edge Blend**  
-  Caps the maximum blend factor when smoothing edges.
+  Caps the maximum blend factor to avoid excessive blur.
 
 - **Debug View**  
-  Toggle to see intermediate masks (edge mask, variance, blend factor) or return to the final color output.
+  Toggle between final output and debug modes (e.g., edge mask, variance, blend factor).
 
 ### Device Preset
 
-**DevicePreset** lets you pick from “Custom Settings,” “Steam Deck LCD,” or “Steam Deck OLED” to slightly alter final color. This is optional and mostly a placeholder.
+Pick from:
+- **Custom Settings**  
+- **Steam Deck LCD**  
+- **Steam Deck OLED**  
+- **Steam Deck OLED LE**
+
+to slightly modify the final blended color. This is mostly a placeholder to demonstrate device-specific adjustments.
 
 ---
 
 ## Performance Considerations
 
-1. **Resolution Impact**  
-   - Higher kernel sizes (e.g., **Ludicrous** with a 13×13 kernel) can be expensive at higher resolutions like 1440p or 4K.  
-   - Expect a noticeable FPS hit if you combine high resolution with the largest sampling modes.
-
-2. **Tuning**  
-   - If performance suffers, try a lower sampling mode (Standard or High).  
-   - If you want even sharper edges, raise `FilterStrength`, but be mindful of potential over-blur on smaller details.
+- **Higher Kernels**  
+  **Ludicrous (13×13)** can be quite expensive at higher resolutions.  
+- **Balance**  
+  If performance is an issue, switch to **Standard (3×3)** or **High (5×5)** for lighter GPU usage.
 
 ---
 
 ## Troubleshooting
 
-- **Shader Not Visible or Not Loading**  
-  - Ensure `MyVectorSeek.fx` is in a folder ReShade recognizes as a valid search path.  
-  - Confirm in the ReShade overlay that the effect is checked/enabled.
+- **Shader Not Appearing**  
+  - Verify `MyVectorSeek.fx` is placed in a recognized shader folder (see ReShade’s *Settings* tab).  
+  - Make sure the effect is checked and enabled in the ReShade UI.
 
-- **Too Much Blur or Artifacts**  
-  - Lower `FilterStrength` or use a smaller kernel mode.  
-  - Increase `EdgeDetectionThreshold` so the effect only applies to stronger edges.
+- **Excessive Blur**  
+  - Lower `FilterStrength`, or choose a smaller kernel (e.g., Standard or High).  
+  - Increase `EdgeDetectionThreshold` to reduce how many edges are blended.
 
-- **No Apparent Change**  
-  - Turn on `DebugView` to see if edges are being detected.  
-  - Reduce `FlatnessThreshold` to ensure the effect isn’t skipping large uniform areas.
+- **No Visual Difference**  
+  - Check if *DebugView* is on – you might be seeing masks rather than the final AA result.  
+  - Reduce `FlatnessThreshold` so it doesn’t skip too many areas.
 
 ---
 
 ## Contributing
 
-Feel free to modify or fork the shader to improve performance or add new features (e.g., curved edge detection, multi-directional sampling, advanced color weighting, etc.).
+Feel free to fork or modify the shader. Potential expansions include:
+- More sophisticated **curved edge** logic.  
+- **Temporal** methods for added stability.  
+- Additional **color-based** weighting for edge detection.
 
 ---
 
 ## License
 
-This shader is offered as-is, with no specific license. You may use, adapt, and redistribute it for personal or non-commercial purposes. If you redistribute it, please credit the original authors/contributors.
+No specific license. You are free to use, adapt, and distribute this shader for personal or non-commercial purposes. If you redistribute it, please give credit to the original authors/contributors.
 
 ---
 
-Enjoy your **MyVectorSeek** single-pass AA shader—whether you stick to **Standard** or push it to **Ludicrous**!
+**Enjoy MyVectorSeek and choose the sampling mode that best fits your performance and visual quality needs!**
