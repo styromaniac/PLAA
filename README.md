@@ -1,6 +1,6 @@
 # MyVectorSeek
 
-MyVectorSeek is a single-pass anti-aliasing (AA) shader for ReShade that uses **depth-based** edge detection exclusively to smooth 3D geometry while preserving on-screen text (OSD) and UI overlays. By relying on the depth buffer, the shader avoids blurring elements rendered on a uniform depth plane (such as text), while still reducing aliasing on 3D edges.
+MyVectorSeek is a single-pass anti-aliasing (AA) shader for ReShade that uses **depth-based** edge detection exclusively to smooth 3D geometry while preserving on-screen text (OSD) and UI overlays. By relying on the depth buffer, the shader avoids blurring elements rendered on a uniform depth plane (such as text), while still reducing aliasing on 3D edges. This is to be used in conjunction with in-game FXAA/TAA.
 
 ## Features
 
