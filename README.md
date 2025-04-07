@@ -1,6 +1,6 @@
 # MyVectorSeek
 
-A **single-pass anti-aliasing (AA)** shader for ReShade, featuring **five** distinct sampling quality modes. This shader combines luminance-based edge detection with a simple directional blend to reduce jagged edges in a single pass.
+A **single-pass anti-aliasing (AA)** shader for ReShade, featuring **five** distinct sampling quality modes. This shader combines luminance-based edge detection with a simple directional blend to reduce jagged edges in a single pass. It's only meant for in-game FXAA, but can work with in-game TAA.
 
 ---
 
