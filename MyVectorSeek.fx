@@ -1,79 +1,109 @@
 //------------------------------------------------------------------------------
-// MyVectorSeek.fx - Single-Pass AA Example (Fixed: Use semicolons in annotations)
+// MyVectorSeek.fx - A (Partly Comedic) Single-Pass AA Shader for ReShade
 //------------------------------------------------------------------------------
+//
+// WARNING: The "Ridiculous," "God Mode," and beyond modes here use extremely
+// large sample kernels that can absolutely murder your performance on any
+// normal GPU at high resolutions. We did it mostly for fun. Use at your own risk!
+//
+// This effect attempts a simple single-pass anti-aliasing approach by:
+//  1. Checking local variance to skip uniform areas.
+//  2. Detecting edges via a Sobel-like gradient and color difference.
+//  3. Blending across the perpendicular to those edges.
+//
+// The insane high-kernel modes are not guaranteed to look better than
+// standard or existing advanced AA solutions (SMAA, FXAA, TAA, etc.),
+// and in many cases, they'll eat your FPS for breakfast.
+//
+// Use "God Mode (768)" only if you want to have fun seeing how
+// unreasonably big a 25x25 or similar kernel can be in practice.
+//
+//------------------------------------------------------------------------------
+
 #include "ReShade.fxh"
 
 //------------------------------------------------------------------------------
 // 1) User-Configurable Parameters
-//    ==> Use semicolons to separate ui_* attributes!
 //------------------------------------------------------------------------------
 uniform int DevicePreset <
     ui_type = "combo";
     ui_items = "Custom Settings\0Steam Deck LCD\0Steam Deck OLED (BOE)\0Steam Deck OLED LE (Samsung)\0";
     ui_label = "Device Preset";
-    ui_tooltip = "Select your device for optimized settings.";
+    ui_tooltip = "Select your device for color-tweak settings. Minimally tested.";
 > = 0;
 
 uniform float FilterStrength <
     ui_type = "slider";
     ui_min = 0.1; ui_max = 10.0; ui_step = 0.1;
     ui_label = "Filter Strength";
-    ui_tooltip = "Overall strength of the AA effect.";
+    ui_tooltip = "Overall strength of the AA effect. Too high = smudge.";
 > = 3.0;
 
 uniform float EdgeDetectionThreshold <
     ui_type = "slider";
     ui_min = 0.01; ui_max = 0.30; ui_step = 0.01;
     ui_label = "Edge Detection Threshold";
-    ui_tooltip = "Threshold for detecting edges.";
+    ui_tooltip = "Threshold for detecting edges. Lower = more edges, more blur.";
 > = 0.10;
 
 uniform float FlatnessThreshold <
     ui_type = "slider";
     ui_min = 0.0; ui_max = 0.02; ui_step = 0.001;
     ui_label = "Flatness Threshold";
-    ui_tooltip = "Variance threshold for near-uniform areas.";
+    ui_tooltip = "Variance threshold for near-uniform areas. Low = more skipping.";
 > = 0.005;
 
 uniform float MaxBlend <
     ui_type = "slider";
     ui_min = 0.0; ui_max = 1.0; ui_step = 0.05;
     ui_label = "Max Edge Blend";
-    ui_tooltip = "Clamp on how strongly edges get blended.";
+    ui_tooltip = "Clamp on how strongly edges get blended. 1.0 = no clamp.";
 > = 0.7;
 
 uniform float GradientPreservationStrength <
     ui_type = "slider";
     ui_min = 0.0; ui_max = 1.0; ui_step = 0.05;
     ui_label = "Gradient Preservation Strength";
-    ui_tooltip = "Preserve smooth gradients (placeholder).";
+    ui_tooltip = "Preserve smoother gradients (placeholder, not very robust).";
 > = 0.70;
 
+/*
+    The higher modes are basically comedic leaps in sampling, each
+    ballooning the kernel size. Expect performance hits that scale
+    up ridiculously. Tread carefully.
+*/
 uniform int SamplingQuality <
     ui_type = "combo";
-    ui_items = "Standard\0High Quality\0Ultra Quality\0";
+    ui_items =
+        "Standard\0"    // 0 => 3x3
+        "High Quality\0"// 1 => 3x3
+        "Ultra Quality\0"//2 => 3x3
+        "Insane (96)\0" // 3 => 5x5
+        "Ludicrous (192)\0" // 4 => 9x9
+        "Ridiculous (384)\0" // 5 => 13x13
+        "God Mode (768)\0";  // 6 => 25x25
     ui_label = "Sampling Quality";
-    ui_tooltip = "Choose the sampling quality.";
-> = 1;
+    ui_tooltip = "Select your desired kernel size (and witness your GPU meltdown).";
+> = 0;
 
 uniform float CurveDetectionStrength <
     ui_type = "slider";
     ui_min = 0.0; ui_max = 1.0; ui_step = 0.05;
     ui_label = "Curve Detection Strength";
-    ui_tooltip = "Strength of curved edge detection (placeholder).";
+    ui_tooltip = "Placeholder for improved curved edge detection. Not fully implemented.";
 > = 0.50;
 
 uniform bool DebugView <
     ui_type = "bool";
     ui_label = "Debug View";
-    ui_tooltip = "Show debug output instead of final color.";
+    ui_tooltip = "Show debug output (edge mask, variance, etc.) instead of final color.";
 > = false;
 
 uniform int DebugMode <
     ui_type = "combo";
     ui_items = "Edge Mask\0Variance\0Blending Factor\0Final Color\0";
     ui_label = "Debug Mode";
-    ui_tooltip = "Choose debug output.";
+    ui_tooltip = "Choose the debug output (if Debug View is on).";
 > = 0;
 
 //------------------------------------------------------------------------------
@@ -106,11 +136,10 @@ float ColorDifference(float3 c1, float3 c2)
 }
 
 //------------------------------------------------------------------------------
-// 4) Local Variance Check (Skip near-uniform areas)
+// 4) Local Variance Checks
 //------------------------------------------------------------------------------
-float ComputeLocalVariance(float2 texcoord, float2 pixelSize)
+float ComputeLocalVariance3x3(float2 texcoord, float2 pixelSize)
 {
-    // A small 3x3 region
     float sumLum = 0.0;
     float sumLumSq = 0.0;
     const int kernelSize = 1; // => 3x3
@@ -131,9 +160,120 @@ float ComputeLocalVariance(float2 texcoord, float2 pixelSize)
     float area = (2 * kernelSize + 1) * (2 * kernelSize + 1);
     float mean = sumLum / area;
     float meanSq = sumLumSq / area;
-
-    // variance = E(X^2) - [E(X)]^2
     float variance = meanSq - (mean * mean);
+
+    return variance;
+}
+
+// (5x5) ~Insane
+float ComputeLocalVariance5x5(float2 texcoord, float2 pixelSize)
+{
+    float sumLum = 0.0;
+    float sumLumSq = 0.0;
+    const int kernelSize = 2; // => 5x5
+
+    [unroll]
+    for (int y = -kernelSize; y <= kernelSize; y++)
+    {
+        [unroll]
+        for (int x = -kernelSize; x <= kernelSize; x++)
+        {
+            float3 col = GetPixelColor(texcoord + pixelSize * float2(x, y));
+            float lum  = GetLuminance(col);
+            sumLum    += lum;
+            sumLumSq  += lum * lum;
+        }
+    }
+
+    float area = (2 * kernelSize + 1) * (2 * kernelSize + 1);
+    float mean = sumLum / area;
+    float meanSq = sumLumSq / area;
+    float variance = meanSq - (mean * mean);
+
+    return variance;
+}
+
+// (9x9) ~Ludicrous
+float ComputeLocalVariance9x9(float2 texcoord, float2 pixelSize)
+{
+    float sumLum = 0.0;
+    float sumLumSq = 0.0;
+    const int kernelSize = 4; // => 9x9
+
+    [unroll]
+    for (int y = -kernelSize; y <= kernelSize; y++)
+    {
+        [unroll]
+        for (int x = -kernelSize; x <= kernelSize; x++)
+        {
+            float3 col = GetPixelColor(texcoord + pixelSize * float2(x, y));
+            float lum  = GetLuminance(col);
+            sumLum    += lum;
+            sumLumSq  += lum * lum;
+        }
+    }
+
+    float area = (2 * kernelSize + 1) * (2 * kernelSize + 1);
+    float mean = sumLum / area;
+    float meanSq = sumLumSq / area;
+    float variance = meanSq - (mean * mean);
+
+    return variance;
+}
+
+// (13x13) ~Ridiculous
+float ComputeLocalVariance13x13(float2 texcoord, float2 pixelSize)
+{
+    float sumLum = 0.0;
+    float sumLumSq = 0.0;
+    const int kernelSize = 6; // => 13x13
+
+    [unroll]
+    for (int y = -kernelSize; y <= kernelSize; y++)
+    {
+        [unroll]
+        for (int x = -kernelSize; x <= kernelSize; x++)
+        {
+            float3 col = GetPixelColor(texcoord + pixelSize * float2(x, y));
+            float lum  = GetLuminance(col);
+            sumLum    += lum;
+            sumLumSq  += lum * lum;
+        }
+    }
+
+    float area = (2 * kernelSize + 1) * (2 * kernelSize + 1);
+    float mean = sumLum / area;
+    float meanSq = sumLumSq / area;
+    float variance = meanSq - (mean * mean);
+
+    return variance;
+}
+
+// (25x25) ~God Mode
+float ComputeLocalVariance25x25(float2 texcoord, float2 pixelSize)
+{
+    float sumLum = 0.0;
+    float sumLumSq = 0.0;
+    const int kernelSize = 12; // => 25x25
+
+    [unroll]
+    for (int y = -kernelSize; y <= kernelSize; y++)
+    {
+        [unroll]
+        for (int x = -kernelSize; x <= kernelSize; x++)
+        {
+            float3 col = GetPixelColor(texcoord + pixelSize * float2(x, y));
+            float lum  = GetLuminance(col);
+            sumLum    += lum;
+            sumLumSq  += lum * lum;
+        }
+    }
+
+    float area = (2 * kernelSize + 1) * (2 * kernelSize + 1);
+    float mean = sumLum / area;
+    float meanSq = sumLumSq / area;
+    float variance = meanSq - (mean * mean);
+
     return variance;
 }
 
@@ -167,18 +307,17 @@ float ComputeEdgeMask(float2 texcoord, float2 pixelSize)
     float gy = -lumTL - 2.0*lumT - lumTR + lumBL + 2.0*lumB + lumBR;
     float gradMag = length(float2(gx, gy));
 
-    // Color difference between center and neighbors
+    // Color difference
     float colorDiff = 0.0;
     colorDiff = max(colorDiff, ColorDifference(c, l));
     colorDiff = max(colorDiff, ColorDifference(c, r));
     colorDiff = max(colorDiff, ColorDifference(c, t));
     colorDiff = max(colorDiff, ColorDifference(c, b));
-    // (Could add diagonal checks as well.)
 
     // Combine
     float combinedEdge = max(gradMag, colorDiff);
 
-    // Scale to ~0..1 (adjust as needed)
+    // Approximate scale
     float mask = saturate(combinedEdge * 4.0);
     return mask;
 }
@@ -188,7 +327,7 @@ float ComputeEdgeMask(float2 texcoord, float2 pixelSize)
 //------------------------------------------------------------------------------
 float3 ApplyAntiAliasing(float2 texcoord, float2 pixelSize, float2 edgeDir, float edgeMask)
 {
-    // Perp direction
+    // Perpendicular direction
     float2 perp = float2(-edgeDir.y, edgeDir.x);
 
     // Original color
@@ -197,7 +336,7 @@ float3 ApplyAntiAliasing(float2 texcoord, float2 pixelSize, float2 edgeDir, floa
     // Single neighbor sample
     float3 neighborCol = GetPixelColor(texcoord + perp * pixelSize);
 
-    // Non-linear blend factor (smoothstep around the threshold region)
+    // Non-linear blend factor
     float lower = EdgeDetectionThreshold;
     float upper = EdgeDetectionThreshold * 2.0;
     float t = smoothstep(lower, upper, edgeMask);
@@ -213,7 +352,7 @@ float3 ApplyAntiAliasing(float2 texcoord, float2 pixelSize, float2 edgeDir, floa
 }
 
 //------------------------------------------------------------------------------
-// 7) Device-Specific Processing (optional)
+// 7) Device-Specific Color Tweak
 //------------------------------------------------------------------------------
 float3 ApplyDeviceSpecificProcessing(float3 original, float3 aaColor)
 {
@@ -225,7 +364,7 @@ float3 ApplyDeviceSpecificProcessing(float3 original, float3 aaColor)
     else if (DevicePreset == 3) // Steam Deck OLED LE
         deviceFactor = 1.5;
 
-    // Simple blend to show how you might adapt final color
+    // Very simplistic final blend
     return lerp(original, aaColor, deviceFactor * 0.3);
 }
 
@@ -237,53 +376,76 @@ float3 PS_VectorSeek(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_
     float2 pixelSize = ReShade::PixelSize;
     float3 originalColor = GetPixelColor(texcoord);
 
-    // Local variance => skip near-uniform regions
-    float localVariance = ComputeLocalVariance(texcoord, pixelSize);
+    // Choose local variance function by sampling mode
+    float localVariance = 0.0;
+    [branch]
+    switch (SamplingQuality)
+    {
+        case 6: // God Mode
+            localVariance = ComputeLocalVariance25x25(texcoord, pixelSize);
+            break;
+        case 5: // Ridiculous
+            localVariance = ComputeLocalVariance13x13(texcoord, pixelSize);
+            break;
+        case 4: // Ludicrous
+            localVariance = ComputeLocalVariance9x9(texcoord, pixelSize);
+            break;
+        case 3: // Insane
+            localVariance = ComputeLocalVariance5x5(texcoord, pixelSize);
+            break;
+        default: // 0,1,2 => 3x3
+            localVariance = ComputeLocalVariance3x3(texcoord, pixelSize);
+    }
 
-    // Basic edge mask
+    // Basic edge detection
     float rawEdgeMask = ComputeEdgeMask(texcoord, pixelSize);
 
     bool lowVariance = (localVariance < FlatnessThreshold);
     bool weakEdge    = (rawEdgeMask < EdgeDetectionThreshold);
 
-    // If no significant edge or it's interior => skip
+    // If no strong edge, skip blending
     if (weakEdge || (lowVariance && rawEdgeMask < (EdgeDetectionThreshold * 2.0)))
     {
-        // Debug outputs
+        // If debug, show fallback data
         if (DebugView)
         {
-            if (DebugMode == 0)      // Edge Mask
-                return float3(0.0, 0.0, 0.0);
-            else if (DebugMode == 1) // Variance
-                return float3(localVariance * 50.0, localVariance * 50.0, localVariance * 50.0);
-            else if (DebugMode == 2) // Blending Factor
-                return float3(0.0, 0.0, 0.0);
-            // DebugMode == 3 => Final Color
+            if (DebugMode == 0)
+                return float3(0.0, 0.0, 0.0); // Edge Mask debug => black
+            if (DebugMode == 1)
+            {
+                float vis = localVariance * 50.0;
+                return float3(vis, vis, vis); // Variance debug
+            }
+            if (DebugMode == 2)
+                return float3(0.0, 0.0, 0.0); // Blending factor => zero
+            // DebugMode == 3 => final color => original
         }
         return originalColor;
     }
 
-    // Compute approximate edge direction
-    float3 upCol = GetPixelColor(texcoord + pixelSize * float2(0, -1));
-    float3 dnCol = GetPixelColor(texcoord + pixelSize * float2(0,  1));
-    float3 lfCol = GetPixelColor(texcoord + pixelSize * float2(-1, 0));
-    float3 rtCol = GetPixelColor(texcoord + pixelSize * float2( 1, 0));
+    // Approx. edge direction
+    float3 upCol = GetPixelColor(texcoord + pixelSize * float2( 0, -1));
+    float3 dnCol = GetPixelColor(texcoord + pixelSize * float2( 0,  1));
+    float3 lfCol = GetPixelColor(texcoord + pixelSize * float2(-1,  0));
+    float3 rtCol = GetPixelColor(texcoord + pixelSize * float2( 1,  0));
 
     float gx = GetLuminance(rtCol) - GetLuminance(lfCol);
     float gy = GetLuminance(dnCol) - GetLuminance(upCol);
     float2 edgeDir = normalize(float2(gx, gy) + 1e-8);
 
-    // Apply AA
+    // Apply the AA blend
     float3 aaColor = ApplyAntiAliasing(texcoord, pixelSize, edgeDir, rawEdgeMask);
 
-    // Device-specific color tweak
+    // Minor device-based color tweak
     float3 finalColor = ApplyDeviceSpecificProcessing(originalColor, aaColor);
 
-    // Debug outputs
+    // Debug view modes
     if (DebugView)
     {
         if (DebugMode == 0) // Edge Mask
+        {
             return float3(rawEdgeMask, rawEdgeMask, rawEdgeMask);
+        }
         else if (DebugMode == 1) // Variance
         {
             float varVis = localVariance * 50.0;
@@ -298,7 +460,7 @@ float3 PS_VectorSeek(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_
             float blendFactor = t * FilterStrength * 0.1;
             return float3(blendFactor, blendFactor, blendFactor);
         }
-        // DebugMode == 3 => show final color
+        // 3 => final color
     }
 
     return finalColor;
@@ -306,7 +468,6 @@ float3 PS_VectorSeek(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_
 
 //------------------------------------------------------------------------------
 // 9) Technique Declaration
-//    Avoid naming it "VECTOR" or "vector" to prevent HLSL parser conflicts
 //------------------------------------------------------------------------------
 technique MyVectorSeek
 {
