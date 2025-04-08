@@ -1,15 +1,13 @@
 //------------------------------------------------------------------------------
 // MyVectorSeek.fx - Combined Edge Detection with Polygon Interior and OSD Bypass
-// Targeting all GPU vendors (NVIDIA, AMD, Intel)
 //   Edge Detection Modes:
 //     0 => Luminance: Fast, but may miss subtle color edges.
 //     1 => Color: More accurate for color transitions, but heavier.
-//     2 => Hybrid: Blends luminance and color detection for balanced quality.
-//     3 => Depth-only: Uses the depth buffer for geometry edges; efficient on supported hardware,
-//                     but may not capture texture-based edges.
-//   Bypasses processing for polygon interiors (when edge mask is below threshold)
-//   and for OSD elements (pixels with alpha below 0.99).
-//   (Variance debug view removed; low-level GPU optimizations applied)
+//     2 => Hybrid: 50:50 blend for balance between performance and quality.
+//     3 => Depth-only: Leverages the depth buffer for rapid geometry edge detection.
+//   Bypasses processing for polygon interiors (edge mask below threshold) and for 
+//   OSD elements (pixels with alpha below 0.99).
+//   (Variance debug view removed)
 //------------------------------------------------------------------------------ 
 
 #include "ReShade.fxh"
@@ -18,12 +16,12 @@
 // 1) User-Configurable Parameters
 //------------------------------------------------------------------------------
 
-// Device Preset: Adjust processing based on target device.
+// Device Preset determines device-specific processing factors.
 uniform int DevicePreset <
     ui_type = "combo";
     ui_items = "Custom Settings\0Steam Deck LCD\0Steam Deck OLED (BOE)\0Steam Deck OLED LE (Samsung)\0";
     ui_label = "Device Preset";
-    ui_tooltip = "Select your device for optimized settings (faster if less correction is needed).";
+    ui_tooltip = "Select your device for optimized settings.";
 > = 0;
 
 uniform float FilterStrength <
@@ -49,44 +47,47 @@ uniform float MaxBlend <
 
 /*
     Edge Detection Modes and their trade-offs:
-      0 => Luminance (Fast): Low compute cost; may miss subtleties.
-      1 => Color (Accurate): Captures fine color differences at a moderate cost.
-      2 => Hybrid (Balanced): Blends luminance and color for overall quality.
-      3 => Depth-only (Efficient on Depth Buffers): Uses depth differences; very efficient but may miss texture edges.
+      0 => Luminance: Fast, low compute cost; may miss subtle color edges.
+      1 => Color: Captures color variations better, at a slightly higher compute cost.
+      2 => Hybrid: Blends luminance and color detection for balanced quality.
+      3 => Depth-only: Uses the depth buffer for geometric edges; efficient on supported hardware,
+                     but may not capture texture-based edges.
 */
 uniform int EdgeMode <
     ui_type = "combo";
     ui_items = "Luminance (Fast)\0Color (Accurate)\0Hybrid (Balanced)\0Depth-only (Efficient on Depth Buffers)\0";
     ui_label = "Edge Detection Mode";
-    ui_tooltip = "Choose an edge detection mode. Luminance is fastest; Color is more accurate; Hybrid blends both; Depth-only uses the depth buffer for geometry edges.";
+    ui_tooltip = "Select edge detection mode. Trade-offs: Luminance is fastest but less detailed; Color is more accurate; Hybrid blends both; Depth-only uses depth data for rapid geometry edge detection.";
 > = 1;
 
 uniform bool DebugView <
     ui_type = "bool";
     ui_label = "Debug View";
-    ui_tooltip = "Show debug output (either edge mask or blending factor).";
+    ui_tooltip = "Show debug output (only edge mask or blending factor).";
 > = false;
 
 /*
-    DebugMode options (Variance removed):
+    DebugMode options:
       0 => Edge Mask
       2 => Blending Factor
+    (Variance option removed)
 */
 uniform int DebugMode <
     ui_type = "combo";
     ui_items = "Edge Mask\0Blending Factor\0";
     ui_label = "Debug Mode";
-    ui_tooltip = "Select the debug information to display.";
+    ui_tooltip = "Choose which debug information to display.";
 > = 0;
 
-// Bypass OSD elements: if enabled, pixels with low alpha (e.g., overlays) will bypass processing.
+// New: Bypass OSD elements.
+// If enabled, pixels with alpha below 0.99 (OSD overlays) will bypass processing.
 uniform bool BypassOSD <
     ui_type = "bool";
     ui_label = "Bypass OSD";
-    ui_tooltip = "When enabled, pixels with alpha < 0.99 (typically OSD elements) will bypass processing.";
+    ui_tooltip = "If enabled, pixels with alpha below 0.99 (OSD elements) will bypass processing.";
 > = true;
 
-// Depth clamping for depth-buffer normalization.
+// Depth clamp sliders for normalizing the depth buffer values.
 uniform float DepthMin <
     ui_type = "slider";
     ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
@@ -104,7 +105,7 @@ uniform float DepthMax <
 //------------------------------------------------------------------------------
 // 2) Textures & Samplers
 //------------------------------------------------------------------------------
-// Sample the color buffer as float4 to check alpha.
+// We now sample the color buffer as a full float4 so we have access to the alpha channel.
 texture texColorBuffer : COLOR;
 sampler samplerColor
 {
@@ -121,32 +122,32 @@ sampler samplerDepth
 // 3) Helper Functions
 //------------------------------------------------------------------------------
 
-// GetPixelColor4 returns a float4 (including alpha), facilitating OSD checks.
+// Sample the color buffer and return a float4 (including alpha).
 float4 GetPixelColor4(float2 uv)
 {
     return tex2D(samplerColor, uv);
 }
 
-// GetPixelColor returns the RGB components only.
+// Return only the RGB components.
 float3 GetPixelColor(float2 uv)
 {
     return GetPixelColor4(uv).rgb;
 }
 
-// GetDepth samples and normalizes the depth value.
+// Sample the depth buffer and normalize using DepthMin/DepthMax.
 float GetDepth(float2 uv)
 {
     float d = tex2D(samplerDepth, uv).r;
     return saturate((d - DepthMin) / (DepthMax - DepthMin));
 }
 
-// GetLuminance computes the luminance of a color.
+// Compute luminance from a color.
 float GetLuminance(float3 c)
 {
     return dot(c, float3(0.299, 0.587, 0.114));
 }
 
-// ColorDifference computes maximum difference between two colors.
+// Compute the maximum channel difference between two colors.
 float ColorDifference(float3 c1, float3 c2)
 {
     float3 diff = abs(c1 - c2);
@@ -157,8 +158,7 @@ float ColorDifference(float3 c1, float3 c2)
 // 4) Edge Detection Functions
 //------------------------------------------------------------------------------
 
-// ComputeEdgeMaskFromSamples uses a cached 3x3 block to determine edge strength.
-// Uses both the luminance-based Sobel operator and color differences.
+// Computes edge mask from a cached 3x3 block using luminance and color differences.
 float ComputeEdgeMaskFromSamples(
     float3 tl, float3 t, float3 tr,
     float3 l,  float3 c, float3 r,
@@ -196,8 +196,9 @@ float ComputeEdgeMaskFromSamples(
     return 0.0;
 }
 
-// ComputeDepthEdgeMask performs edge detection using only depth values.
-// It samples the center and four cardinal neighbors and compares differences.
+// Depth-only edge detection.
+// Sample the depth at the center and four cardinal neighbors,
+// then compute the maximum depth difference.
 float ComputeDepthEdgeMask(float2 uv, float2 pixelSize)
 {
     float dC = GetDepth(uv);
@@ -217,8 +218,7 @@ float ComputeDepthEdgeMask(float2 uv, float2 pixelSize)
 // 5) Box Blur Function
 //------------------------------------------------------------------------------
 
-// ApplyBoxBlur averages a 3x3 neighborhood. This function is kept for alternatives
-// but is bypassed when not needed.
+// Averages the color values of a 3x3 neighborhood.
 float3 ApplyBoxBlur(float2 uv, float2 pixelSize)
 {
     float3 sum = float3(0.0, 0.0, 0.0);
@@ -236,7 +236,7 @@ float3 ApplyBoxBlur(float2 uv, float2 pixelSize)
 // 6) Device-Specific Processing
 //------------------------------------------------------------------------------
 
-// ApplyDeviceSpecificProcessing tweaks the final blending based on the selected device.
+// Adjusts the blended result based on a device-specific factor.
 float3 ApplyDeviceSpecificProcessing(float3 original, float3 effectColor)
 {
     float deviceFactor = 1.0;
@@ -257,17 +257,16 @@ float3 PS_VectorSeek(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 {
     float2 pixelSize = ReShade::PixelSize;
 
-    // Sample the color buffer as float4 (needed for OSD alpha checking).
+    // Sample the color buffer as float4 to check the alpha channel.
     float4 color4 = GetPixelColor4(uv);
     
-    // Bypass OSD elements using a [branch] hint for efficiency.
     [branch]
     if (BypassOSD && color4.a < 0.99)
         return color4.rgb;
     
     float3 originalColor = color4.rgb;
 
-    // Cache the 3x3 neighborhood once.
+    // Cache a 3x3 neighborhood for edge detection.
     float3 tl = GetPixelColor(uv + pixelSize * float2(-1, -1));
     float3 t  = GetPixelColor(uv + pixelSize * float2( 0, -1));
     float3 tr = GetPixelColor(uv + pixelSize * float2( 1, -1));
@@ -303,7 +302,6 @@ float3 PS_VectorSeek(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
         }
     }
 
-    // Bypass polygon interior pixels when edge strength is low.
     [branch]
     if (rawEdgeMask < EdgeDetectionThreshold)
         return originalColor;
