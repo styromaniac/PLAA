@@ -1,12 +1,13 @@
 //------------------------------------------------------------------------------
-// MyVectorSeek.fx - Combined Edge Detection with Polygon Interior and OSD Bypass
+// MyVectorSeek.fx - Combined Edge Detection with
+// Polygon Interior and OSD Bypass
 //   Edge Detection Modes:
 //     0 => Luminance: Fast, but may miss subtle color edges.
 //     1 => Color: More accurate for color transitions, but heavier.
 //     2 => Hybrid: 50:50 blend for balance between performance and quality.
 //     3 => Depth-only: Leverages the depth buffer for rapid geometry edge detection.
 //   Bypasses processing for polygon interiors (edge mask below threshold) and for 
-//   OSD elements (pixels with alpha below 0.99).
+//   OSD elements (pixels with alpha below a set threshold).
 //------------------------------------------------------------------------------ 
 
 #include "ReShade.fxh"
@@ -79,7 +80,7 @@ uniform int DebugMode <
 > = 0;
 
 // New: Bypass OSD elements.
-// If enabled, pixels with alpha below 0.99 (OSD overlays) will bypass processing.
+// Pixels assumed to be part of the OSD have an alpha lower than the threshold.
 uniform bool BypassOSD <
     ui_type = "bool";
     ui_label = "Bypass OSD";
@@ -264,7 +265,7 @@ float3 PS_VectorSeek(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
     // Sample the color buffer as float4 to check the alpha channel.
     float4 color4 = GetPixelColor4(uv);
     
-    // Bypass OSD elements if enabled (assuming OSD pixels have alpha below 0.99).
+    // Bypass OSD elements if enabled (assuming OSD pixels have alpha < 0.99).
     if (BypassOSD && color4.a < 0.99)
         return color4.rgb;
     
