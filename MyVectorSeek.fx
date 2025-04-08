@@ -1,12 +1,8 @@
 //------------------------------------------------------------------------------
-// MyVectorSeek_Combined_BypassInterior_WithTooltips.fx - Combined Edge Detection with
-// Polygon Interior Bypass and Updated Menu Tooltips
-//   Edge Detection Modes:
-//     0 => Luminance: Fast, but may miss subtle color edges.
-//     1 => Color: More accurate for color transitions, but heavier.
-//     2 => Hybrid: 50:50 blend for balance between performance and quality.
-//     3 => Depth-only: Leverages depth buffer; efficient on supported hardware,
-//                    but may not capture texture-based edges.
+// MyVectorSeek_Combined_BypassInterior.fx - Combined Edge Detection with
+// Polygon Interior Bypass
+//   Edge Detection Modes: Luminance, Color, Hybrid, Depth-only.
+//   Bypasses processing for polygon interior pixels (edge mask below threshold).
 //------------------------------------------------------------------------------ 
 
 #include "ReShade.fxh"
@@ -34,29 +30,28 @@ uniform float EdgeDetectionThreshold <
     ui_type = "slider";
     ui_min = 0.01; ui_max = 0.30; ui_step = 0.01;
     ui_label = "Edge Detection Threshold";
-    ui_tooltip = "Minimum edge strength required to trigger processing.";
+    ui_tooltip = "Threshold for detecting edges.";
 > = 0.10;
 
 uniform float MaxBlend <
     ui_type = "slider";
     ui_min = 0.0; ui_max = 1.0; ui_step = 0.05;
     ui_label = "Max Edge Blend";
-    ui_tooltip = "Maximum allowed blend factor for edge processing.";
+    ui_tooltip = "Clamp on how strongly edges get blended.";
 > = 0.7;
 
 /*
-    Edge Detection Modes and their trade-offs:
-      0 => Luminance: Fast, low compute cost; may miss textured or subtle color edges.
-      1 => Color: Captures color variations better, at a slightly higher compute cost.
-      2 => Hybrid: Balances luminance and color detection for overall quality.
-      3 => Depth-only: Uses the depth buffer for geometric edges; efficient on supported hardware,
-                     but may not capture non-geometric (texture-based) edges.
+    Edge Detection Modes:
+      0 => Luminance only  
+      1 => Color only  
+      2 => Hybrid (50:50 luminance & color)  
+      3 => Depth-only
 */
 uniform int EdgeMode <
     ui_type = "combo";
-    ui_items = "Luminance (Fast)\0Color (Accurate)\0Hybrid (Balanced)\0Depth-only (Efficient on Depth Buffers)\0";
+    ui_items = "Luminance\0Color\0Hybrid\0Depth\0";
     ui_label = "Edge Detection Mode";
-    ui_tooltip = "Select edge detection mode. Trade-offs: Luminance is the fastest but less detailed; Color is more accurate; Hybrid blends both; Depth-only uses depth data for rapid geometry edge detection.";
+    ui_tooltip = "Select edge detection mode.";
 > = 1;
 
 uniform bool DebugView <
@@ -66,16 +61,16 @@ uniform bool DebugView <
 > = false;
 
 /*
-    DebugMode options:
-      0 => Edge Mask
-      1 => Variance
+    DebugMode:
+      0 => Edge Mask  
+      1 => Variance  
       2 => Blending Factor
 */
 uniform int DebugMode <
     ui_type = "combo";
     ui_items = "Edge Mask\0Variance\0Blending Factor\0";
     ui_label = "Debug Mode";
-    ui_tooltip = "Choose which debug information to display.";
+    ui_tooltip = "Choose debug output.";
 > = 0;
 
 // Depth clamp sliders for normalizing the depth buffer values.
@@ -83,14 +78,14 @@ uniform float DepthMin <
     ui_type = "slider";
     ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
     ui_label = "Depth Min";
-    ui_tooltip = "Minimum depth value for normalization.";
+    ui_tooltip = "Clamp the minimum depth to this value.";
 > = 0.0;
 
 uniform float DepthMax <
     ui_type = "slider";
     ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
     ui_label = "Depth Max";
-    ui_tooltip = "Maximum depth value for normalization.";
+    ui_tooltip = "Clamp the maximum depth to this value.";
 > = 1.0;
 
 //------------------------------------------------------------------------------
