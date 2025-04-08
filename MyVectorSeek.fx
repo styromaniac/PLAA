@@ -1,13 +1,12 @@
 //------------------------------------------------------------------------------
-// MyVectorSeek.fx - Combined Edge Detection with
-// Polygon Interior and OSD Bypass
+// MyVectorSeek_Combined_BypassInterior_WithTooltips.fx - Combined Edge Detection with
+// Polygon Interior Bypass and Updated Menu Tooltips
 //   Edge Detection Modes:
 //     0 => Luminance: Fast, but may miss subtle color edges.
 //     1 => Color: More accurate for color transitions, but heavier.
 //     2 => Hybrid: 50:50 blend for balance between performance and quality.
-//     3 => Depth-only: Leverages the depth buffer for rapid geometry edge detection.
-//   Bypasses processing for polygon interiors (edge mask below threshold) and for 
-//   OSD elements (pixels with alpha below a set threshold).
+//     3 => Depth-only: Leverages depth buffer; efficient on supported hardware,
+//                    but may not capture texture-based edges.
 //------------------------------------------------------------------------------ 
 
 #include "ReShade.fxh"
@@ -49,15 +48,15 @@ uniform float MaxBlend <
     Edge Detection Modes and their trade-offs:
       0 => Luminance: Fast, low compute cost; may miss textured or subtle color edges.
       1 => Color: Captures color variations better, at a slightly higher compute cost.
-      2 => Hybrid: Blends luminance and color detection for balanced quality.
+      2 => Hybrid: Balances luminance and color detection for overall quality.
       3 => Depth-only: Uses the depth buffer for geometric edges; efficient on supported hardware,
-                     but may not capture texture-based edges.
+                     but may not capture non-geometric (texture-based) edges.
 */
 uniform int EdgeMode <
     ui_type = "combo";
     ui_items = "Luminance (Fast)\0Color (Accurate)\0Hybrid (Balanced)\0Depth-only (Efficient on Depth Buffers)\0";
     ui_label = "Edge Detection Mode";
-    ui_tooltip = "Select edge detection mode. Trade-offs: Luminance is fastest but less detailed; Color is more accurate; Hybrid blends both; Depth-only uses depth data for rapid geometry edge detection.";
+    ui_tooltip = "Select edge detection mode. Trade-offs: Luminance is the fastest but less detailed; Color is more accurate; Hybrid blends both; Depth-only uses depth data for rapid geometry edge detection.";
 > = 1;
 
 uniform bool DebugView <
@@ -79,14 +78,6 @@ uniform int DebugMode <
     ui_tooltip = "Choose which debug information to display.";
 > = 0;
 
-// New: Bypass OSD elements.
-// Pixels assumed to be part of the OSD have an alpha lower than the threshold.
-uniform bool BypassOSD <
-    ui_type = "bool";
-    ui_label = "Bypass OSD";
-    ui_tooltip = "If enabled, pixels with alpha below 0.99 (OSD elements) will bypass processing.";
-> = true;
-
 // Depth clamp sliders for normalizing the depth buffer values.
 uniform float DepthMin <
     ui_type = "slider";
@@ -105,7 +96,6 @@ uniform float DepthMax <
 //------------------------------------------------------------------------------
 // 2) Textures & Samplers
 //------------------------------------------------------------------------------
-// We now sample the color buffer as a full float4 so we have access to the alpha channel.
 texture texColorBuffer : COLOR;
 sampler samplerColor
 {
@@ -122,16 +112,10 @@ sampler samplerDepth
 // 3) Helper Functions
 //------------------------------------------------------------------------------
 
-// Sample the color buffer and return a float4 (including alpha).
-float4 GetPixelColor4(float2 uv)
-{
-    return tex2D(samplerColor, uv);
-}
-
-// Return only the RGB components.
+// Sample the color buffer.
 float3 GetPixelColor(float2 uv)
 {
-    return GetPixelColor4(uv).rgb;
+    return tex2D(samplerColor, uv).rgb;
 }
 
 // Sample the depth buffer and normalize using DepthMin/DepthMax.
@@ -261,15 +245,7 @@ float3 ApplyDeviceSpecificProcessing(float3 original, float3 effectColor)
 float3 PS_VectorSeek(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 {
     float2 pixelSize = ReShade::PixelSize;
-    
-    // Sample the color buffer as float4 to check the alpha channel.
-    float4 color4 = GetPixelColor4(uv);
-    
-    // Bypass OSD elements if enabled (assuming OSD pixels have alpha < 0.99).
-    if (BypassOSD && color4.a < 0.99)
-        return color4.rgb;
-    
-    float3 originalColor = color4.rgb;
+    float3 originalColor = GetPixelColor(uv);
 
     // Cache a 3x3 neighborhood for color-based edge methods.
     float3 tl = GetPixelColor(uv + pixelSize * float2(-1, -1));
