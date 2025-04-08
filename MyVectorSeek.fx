@@ -7,7 +7,6 @@
 //     3 => Depth-only: Leverages the depth buffer for rapid geometry edge detection.
 //   Bypasses processing for polygon interiors (edge mask below threshold) and for 
 //   OSD elements (pixels with alpha below 0.99).
-//   (Variance debug view removed)
 //------------------------------------------------------------------------------ 
 
 #include "ReShade.fxh"
@@ -47,7 +46,7 @@ uniform float MaxBlend <
 
 /*
     Edge Detection Modes and their trade-offs:
-      0 => Luminance: Fast, low compute cost; may miss subtle color edges.
+      0 => Luminance: Fast, low compute cost; may miss textured or subtle color edges.
       1 => Color: Captures color variations better, at a slightly higher compute cost.
       2 => Hybrid: Blends luminance and color detection for balanced quality.
       3 => Depth-only: Uses the depth buffer for geometric edges; efficient on supported hardware,
@@ -63,18 +62,18 @@ uniform int EdgeMode <
 uniform bool DebugView <
     ui_type = "bool";
     ui_label = "Debug View";
-    ui_tooltip = "Show debug output (only edge mask or blending factor).";
+    ui_tooltip = "Show debug output (edge mask or debug values).";
 > = false;
 
 /*
     DebugMode options:
       0 => Edge Mask
+      1 => Variance
       2 => Blending Factor
-    (Variance option removed)
 */
 uniform int DebugMode <
     ui_type = "combo";
-    ui_items = "Edge Mask\0Blending Factor\0";
+    ui_items = "Edge Mask\0Variance\0Blending Factor\0";
     ui_label = "Debug Mode";
     ui_tooltip = "Choose which debug information to display.";
 > = 0;
@@ -164,6 +163,7 @@ float ComputeEdgeMaskFromSamples(
     float3 l,  float3 c, float3 r,
     float3 bl, float3 b, float3 br)
 {
+    // Compute luminance for each sample.
     float lumTL = GetLuminance(tl);
     float lumT  = GetLuminance(t);
     float lumTR = GetLuminance(tr);
@@ -174,11 +174,13 @@ float ComputeEdgeMaskFromSamples(
     float lumB  = GetLuminance(b);
     float lumBR = GetLuminance(br);
 
+    // Luminance Sobel operator.
     float gx = -lumTL - 2.0 * lumL - lumBL + lumTR + 2.0 * lumR + lumBR;
     float gy = -lumTL - 2.0 * lumT - lumTR + lumBL + 2.0 * lumB + lumBR;
     float gradMag = length(float2(gx, gy));
     float lumMask = saturate(gradMag * 4.0);
 
+    // Color edge component using cardinal differences.
     float colorDiff = 0.0;
     colorDiff = max(colorDiff, ColorDifference(c, l));
     colorDiff = max(colorDiff, ColorDifference(c, r));
@@ -186,13 +188,14 @@ float ComputeEdgeMaskFromSamples(
     colorDiff = max(colorDiff, ColorDifference(c, b));
     float colMask = saturate(max(gradMag, colorDiff) * 4.0);
 
-    if (EdgeMode == 0)
+    if (EdgeMode == 0) // Luminance-only.
         return lumMask;
-    else if (EdgeMode == 1)
+    else if (EdgeMode == 1) // Color-only.
         return colMask;
-    else if (EdgeMode == 2)
+    else if (EdgeMode == 2) // Hybrid: 50:50 blend.
         return saturate(lumMask * 0.5 + colMask * 0.5);
     
+    // Should not reach here if EdgeMode==3.
     return 0.0;
 }
 
@@ -211,6 +214,7 @@ float ComputeDepthEdgeMask(float2 uv, float2 pixelSize)
     float diffVertical   = abs(dB - dT);
     float depthEdge = max(diffHorizontal, diffVertical);
 
+    // Multiplier adjusts sensitivity; tune as needed.
     return saturate(depthEdge * 10.0);
 }
 
@@ -240,11 +244,11 @@ float3 ApplyBoxBlur(float2 uv, float2 pixelSize)
 float3 ApplyDeviceSpecificProcessing(float3 original, float3 effectColor)
 {
     float deviceFactor = 1.0;
-    if (DevicePreset == 1)
+    if (DevicePreset == 1)      // Steam Deck LCD.
         deviceFactor = 0.8;
-    else if (DevicePreset == 2)
+    else if (DevicePreset == 2) // Steam Deck OLED (BOE).
         deviceFactor = 1.2;
-    else if (DevicePreset == 3)
+    else if (DevicePreset == 3) // Steam Deck OLED LE.
         deviceFactor = 1.5;
     
     return lerp(original, effectColor, deviceFactor * 0.3);
@@ -256,34 +260,37 @@ float3 ApplyDeviceSpecificProcessing(float3 original, float3 effectColor)
 float3 PS_VectorSeek(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 {
     float2 pixelSize = ReShade::PixelSize;
-
+    
     // Sample the color buffer as float4 to check the alpha channel.
     float4 color4 = GetPixelColor4(uv);
     
-    [branch]
+    // Bypass OSD elements if enabled (assuming OSD pixels have alpha below 0.99).
     if (BypassOSD && color4.a < 0.99)
         return color4.rgb;
     
     float3 originalColor = color4.rgb;
 
-    // Cache a 3x3 neighborhood for edge detection.
+    // Cache a 3x3 neighborhood for color-based edge methods.
     float3 tl = GetPixelColor(uv + pixelSize * float2(-1, -1));
     float3 t  = GetPixelColor(uv + pixelSize * float2( 0, -1));
     float3 tr = GetPixelColor(uv + pixelSize * float2( 1, -1));
     float3 l  = GetPixelColor(uv + pixelSize * float2(-1,  0));
-    float3 c  = originalColor;
+    float3 c  = originalColor; // Already fetched.
     float3 r  = GetPixelColor(uv + pixelSize * float2( 1,  0));
     float3 bl = GetPixelColor(uv + pixelSize * float2(-1,  1));
     float3 b  = GetPixelColor(uv + pixelSize * float2( 0,  1));
     float3 br = GetPixelColor(uv + pixelSize * float2( 1,  1));
 
     float rawEdgeMask = 0.0;
+    // Select edge detection method based on user setting.
     if (EdgeMode == 3)
     {
+        // Depth-only edge detection.
         rawEdgeMask = ComputeDepthEdgeMask(uv, pixelSize);
     }
     else
     {
+        // Use the cached 3x3 neighborhood for luminance/color/hybrid detection.
         rawEdgeMask = ComputeEdgeMaskFromSamples(tl, t, tr, l, c, r, bl, b, br);
     }
 
@@ -302,10 +309,11 @@ float3 PS_VectorSeek(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
         }
     }
 
-    [branch]
+    // Bypass polygon interior pixels when edge strength is low.
     if (rawEdgeMask < EdgeDetectionThreshold)
         return originalColor;
 
+    // For strong edges, simply use the original color processed by device-specific adjustments.
     float3 finalColor = ApplyDeviceSpecificProcessing(originalColor, originalColor);
     return finalColor;
 }
