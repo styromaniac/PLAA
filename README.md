@@ -1,116 +1,45 @@
-# MyVectorSeek
+# MyVectorSeek.fx
 
-A **single-pass anti-aliasing (AA)** shader for ReShade, featuring **five** distinct sampling quality modes. This shader combines luminance-based edge detection with a simple directional blend to reduce jagged edges in a single pass. It's only meant for use with in-game FXAA, but can work with in-game TAA.
-
----
+MyVectorSeek.fx is a single-pass anti-aliasing shader that optimizes latency by reducing redundant memory accesses and consolidating computations. Built for integration with ReShade, this shader is designed to work in tandem with FXAA while keeping full visual quality.
 
 ## Features
 
-1. **Device Preset** tweaks (Steam Deck LCD, OLED, etc.) to slightly adapt final color.  
-2. **Edge Detection Thresholds** to selectively smooth only where needed.  
-3. **Local Variance** checks to skip near-uniform areas.  
-4. **Five** sampling modes, each with a **unique** kernel size:
+- **Optimized Edge Detection:**  
+  Uses a consolidated 3×3 neighborhood sampling strategy to compute both luminance-based Sobel and color difference edge masks. Select between Luminance, Color, or Hybrid modes.
 
-   | Mode         | Kernel Size | Taps  |
-   | ------------ | ----------- | ----- |
-   | **Standard** | 3×3         | 9     |
-   | **High**     | 5×5         | 25    |
-   | **Ultra**    | 7×7         | 49    |
-   | **Insane**   | 9×9         | 81    |
-   | **Ludicrous**| 13×13       | 169   |
+- **Latency Reduction Improvements:**  
+  - **Minimized Memory Accesses:** Caches neighboring pixel data to avoid redundant texture fetches.  
+  - **Conditional Evaluation:** Introduces early exits for weak edges to skip heavy computations.  
+  - **Combined Computations:** Reuses cached samples for gradient and edge mask calculations.  
+  - **Device-Specific Adjustments:** Automatically adjusts anti-aliasing parameters for different device presets (e.g., Steam Deck LCD, OLED).
 
-5. **Debug View** options to visualize the edge mask, variance, or blend factor.
+- **Customizability:**  
+  Multiple user-configurable parameters allow fine-tuning of filter strength, edge detection thresholds, blending factors, sampling quality, depth clamping, and debug output modes.
 
----
+## File Structure
 
-## Installation
+- **MyVectorSeek.fx:**  
+  The primary shader file featuring all latency optimizations and performance improvements.
 
-1. **Install ReShade**  
-   - Download and run the ReShade setup from [reshade.me](https://reshade.me/).  
-   - Select your game or application, choose the applicable rendering API (e.g., DX11, DX12, Vulkan, etc.), and finish the installer.
+## Getting Started
 
-2. **Copy the Shader File**  
-   - Place `MyVectorSeek.fx` into your ReShade `\Shaders\` folder.  
-   - If you’re unsure of the location, open the ReShade overlay in-game and check the *Settings* tab for “Effect Search Paths.”
+1. **Installation:**  
+   Place the `MyVectorSeek.fx` file in your ReShade shader directory.
 
-3. **Enable the Effect**  
-   - Launch your game/app with ReShade active.  
-   - Open the ReShade menu (commonly bound to the `Home` key).  
-   - In the *Home* or *Add-ons* tab, locate **MyVectorSeek**.  
-   - Check the box to load and apply the effect.
+2. **Configuration:**  
+   Adjust user-configurable parameters via the ReShade UI. Key parameters include:
+   - **Device Preset:** Select the appropriate device profile.
+   - **Filter Strength and Edge Detection Threshold:** Control the intensity and sensitivity of the anti-aliasing.
+   - **Max Blend and Sampling Quality:** Fine-tune the blending and sampling performance.
+   - **Debug Modes:** Toggle visual output of edge masks, variance, or blending factors for troubleshooting.
 
----
-
-## Usage
-
-Open the ReShade overlay to adjust these parameters:
-
-- **Sampling Quality**  
-  - **Standard (3×3)** → **Ludicrous (13×13)**.  
-  - Larger kernels provide stronger AA at a higher performance cost.
-
-- **Filter Strength**  
-  Controls how aggressively edges are blended (0.1–10.0).
-
-- **Edge Detection Threshold**  
-  Determines how strong an edge must be before AA applies.
-
-- **Max Edge Blend**  
-  Caps the maximum blend factor to avoid excessive blur.
-
-- **Debug View**  
-  Toggle between final output and debug modes (e.g., edge mask, variance, blend factor).
-
-### Device Preset
-
-Pick from:
-- **Custom Settings**  
-- **Steam Deck LCD**  
-- **Steam Deck OLED**  
-- **Steam Deck OLED LE**
-
-to slightly modify the final blended color. This is mostly a placeholder to demonstrate device-specific adjustments.
-
----
-
-## Performance Considerations
-
-- **Higher Kernels**  
-  **Ludicrous (13×13)** can be quite expensive at higher resolutions.  
-- **Balance**  
-  If performance is an issue, switch to **Standard (3×3)** or **High (5×5)** for lighter GPU usage.
-
----
-
-## Troubleshooting
-
-- **Shader Not Appearing**  
-  - Verify `MyVectorSeek.fx` is placed in a recognized shader folder (see ReShade’s *Settings* tab).  
-  - Make sure the effect is checked and enabled in the ReShade UI.
-
-- **Excessive Blur**  
-  - Lower `FilterStrength`, or choose a smaller kernel (e.g., Standard or High).  
-  - Increase `EdgeDetectionThreshold` to reduce how many edges are blended.
-
-- **No Visual Difference**  
-  - Check if *DebugView* is on – you might be seeing masks rather than the final AA result.  
-  - Reduce `FlatnessThreshold` so it doesn’t skip too many areas.
-
----
-
-## Contributing
-
-Feel free to fork or modify the shader. Potential expansions include:
-- More sophisticated **curved edge** logic.  
-- **Temporal** methods for added stability.  
-- Additional **color-based** weighting for edge detection.
-
----
+3. **Usage with FXAA:**  
+   The shader is designed to complement FXAA. Ensure FXAA is enabled in your ReShade configuration to achieve optimal visual quality.
 
 ## License
 
-No specific license. You are free to use, adapt, and distribute this shader for personal or non-commercial purposes. If you redistribute it, please give credit to the original authors/contributors.
+*Insert license information here as applicable.*
 
----
+## Notes
 
-**Enjoy MyVectorSeek and choose the sampling mode that best fits your performance and visual quality needs!**
+This version of MyVectorSeek.fx maintains the original filename and integrates significant latency improvements. Further adjustments can be made based on performance profiling or device-specific requirements.

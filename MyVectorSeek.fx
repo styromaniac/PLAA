@@ -1,14 +1,14 @@
 //------------------------------------------------------------------------------
-// MyVectorSeek.fx - Single-Pass AA with (Luminance / Color / Hybrid) Edge Detection
+// MyVectorSeek.fx - Single-Pass AA with Optimized Edge Detection
 //   + Depth Min/Max Sliders
-//   + No "Final Color" debug mode
+//   + Optimized memory access & conditional evaluation for latency reduction
 //------------------------------------------------------------------------------
+
 #include "ReShade.fxh"
 
 //------------------------------------------------------------------------------
-// 1) User-Configurable Parameters
+// 1) User-Configurable Parameters (unchanged)
 //------------------------------------------------------------------------------
-
 uniform int DevicePreset <
     ui_type = "combo";
     ui_items = "Custom Settings\0Steam Deck LCD\0Steam Deck OLED (BOE)\0Steam Deck OLED LE (Samsung)\0";
@@ -45,12 +45,12 @@ uniform float GradientPreservationStrength <
 > = 0.70;
 
 /*
-    Five Distinct Sampling Quality modes:
-      0) Standard (3×3 => 9 taps)
-      1) High Quality (5×5 => 25 taps)
-      2) Ultra Quality (7×7 => 49 taps)
-      3) Insane (9×9 => 81 taps)
-      4) Ludicrous (13×13 => 169 taps)
+    Sampling Quality modes:
+      0) Standard (3x3 - 9 taps)
+      1) High Quality (5x5 - 25 taps)
+      2) Ultra Quality (7x7 - 49 taps)
+      3) Insane (9x9 - 81 taps)
+      4) Ludicrous (13x13 - 169 taps)
 */
 uniform int SamplingQuality <
     ui_type = "combo";
@@ -90,7 +90,7 @@ uniform bool DebugView <
 > = false;
 
 /*
-    DebugMode now excludes "Final Color".
+    DebugMode:
     0 => Edge Mask
     1 => Variance
     2 => Blending Factor
@@ -103,8 +103,7 @@ uniform int DebugMode <
 > = 0;
 
 //------------------------------------------------------------------------------
-// Depth Min/Max Sliders
-//   For clamping depth values from the built-in ReShade depth buffer
+// Depth Min/Max Sliders (unchanged)
 //------------------------------------------------------------------------------
 uniform float DepthMin <
     ui_type = "slider";
@@ -121,7 +120,7 @@ uniform float DepthMax <
 > = 1.0;
 
 //------------------------------------------------------------------------------
-// 2) Textures & Samplers
+// 2) Textures & Samplers (unchanged)
 //------------------------------------------------------------------------------
 texture texColorBuffer : COLOR;
 sampler samplerColor
@@ -129,7 +128,6 @@ sampler samplerColor
     Texture = texColorBuffer;
 };
 
-// Depth texture + sampler for potential local variance or other logic
 texture texDepth : DEPTH;
 sampler samplerDepth
 {
@@ -137,20 +135,17 @@ sampler samplerDepth
 };
 
 //------------------------------------------------------------------------------
-// 3) Helper Functions
+// 3) Helper Functions (unchanged)
 //------------------------------------------------------------------------------
 float3 GetPixelColor(float2 uv)
 {
-    // For color buffer
     return tex2D(samplerColor, uv).rgb;
 }
 
-// Depth sampling with user clamp
 float GetDepth(float2 uv)
 {
     float d = tex2D(samplerDepth, uv).r;
-    // Scale/clamp to [0..1] based on DepthMin..DepthMax
-    d = saturate( (d - DepthMin) / (DepthMax - DepthMin) );
+    d = saturate((d - DepthMin) / (DepthMax - DepthMin));
     return d;
 }
 
@@ -166,12 +161,12 @@ float ColorDifference(float3 c1, float3 c2)
 }
 
 //------------------------------------------------------------------------------
-// 4) Local Variance Functions
+// 4) Local Variance Functions (unchanged)
 //------------------------------------------------------------------------------
 float ComputeLocalVariance3x3(float2 uv, float2 pixelSize)
 {
     float sumLum = 0.0, sumLumSq = 0.0;
-    const int k = 1; // => 3x3
+    const int k = 1; // 3x3
 
     [unroll]
     for (int y = -k; y <= k; y++)
@@ -185,8 +180,7 @@ float ComputeLocalVariance3x3(float2 uv, float2 pixelSize)
             sumLumSq  += lum * lum;
         }
     }
-
-    float area   = (2 * k + 1) * (2 * k + 1);
+    float area   = 9.0;
     float mean   = sumLum / area;
     float meanSq = sumLumSq / area;
     return meanSq - (mean * mean);
@@ -195,8 +189,7 @@ float ComputeLocalVariance3x3(float2 uv, float2 pixelSize)
 float ComputeLocalVariance5x5(float2 uv, float2 pixelSize)
 {
     float sumLum = 0.0, sumLumSq = 0.0;
-    const int k = 2; // => 5x5
-
+    const int k = 2;
     [unroll]
     for (int y = -k; y <= k; y++)
     {
@@ -209,8 +202,7 @@ float ComputeLocalVariance5x5(float2 uv, float2 pixelSize)
             sumLumSq  += lum * lum;
         }
     }
-
-    float area   = (2 * k + 1) * (2 * k + 1);
+    float area   = 25.0;
     float mean   = sumLum / area;
     float meanSq = sumLumSq / area;
     return meanSq - (mean * mean);
@@ -219,8 +211,7 @@ float ComputeLocalVariance5x5(float2 uv, float2 pixelSize)
 float ComputeLocalVariance7x7(float2 uv, float2 pixelSize)
 {
     float sumLum = 0.0, sumLumSq = 0.0;
-    const int k = 3; // => 7x7
-
+    const int k = 3;
     [unroll]
     for (int y = -k; y <= k; y++)
     {
@@ -233,8 +224,7 @@ float ComputeLocalVariance7x7(float2 uv, float2 pixelSize)
             sumLumSq  += lum * lum;
         }
     }
-
-    float area   = (2 * k + 1) * (2 * k + 1);
+    float area   = 49.0;
     float mean   = sumLum / area;
     float meanSq = sumLumSq / area;
     return meanSq - (mean * mean);
@@ -243,8 +233,7 @@ float ComputeLocalVariance7x7(float2 uv, float2 pixelSize)
 float ComputeLocalVariance9x9(float2 uv, float2 pixelSize)
 {
     float sumLum = 0.0, sumLumSq = 0.0;
-    const int k = 4; // => 9x9
-
+    const int k = 4;
     [unroll]
     for (int y = -k; y <= k; y++)
     {
@@ -257,8 +246,7 @@ float ComputeLocalVariance9x9(float2 uv, float2 pixelSize)
             sumLumSq  += lum * lum;
         }
     }
-
-    float area   = (2 * k + 1) * (2 * k + 1);
+    float area   = 81.0;
     float mean   = sumLum / area;
     float meanSq = sumLumSq / area;
     return meanSq - (mean * mean);
@@ -267,8 +255,7 @@ float ComputeLocalVariance9x9(float2 uv, float2 pixelSize)
 float ComputeLocalVariance13x13(float2 uv, float2 pixelSize)
 {
     float sumLum = 0.0, sumLumSq = 0.0;
-    const int k = 6; // => 13x13
-
+    const int k = 6;
     [unroll]
     for (int y = -k; y <= k; y++)
     {
@@ -281,28 +268,28 @@ float ComputeLocalVariance13x13(float2 uv, float2 pixelSize)
             sumLumSq  += lum * lum;
         }
     }
-
-    float area   = (2 * k + 1) * (2 * k + 1);
+    float area   = 169.0;
     float mean   = sumLum / area;
     float meanSq = sumLumSq / area;
     return meanSq - (mean * mean);
 }
 
 //------------------------------------------------------------------------------
-// 5) Luminance-Only Sobel
+// 5) Optimized 3x3 Neighborhood-Based Edge Detection
 //------------------------------------------------------------------------------
-float ComputeEdgeMaskLuminance(float2 uv, float2 pixelSize)
+//
+// This helper uses already-cached 3x3 samples to compute the edge mask.
+// Depending on EdgeMode it computes:
+// - Luminance Sobel (Luminance only)
+// - Additional color difference (Color mode)
+// - A 50:50 blend for Hybrid
+//
+float ComputeEdgeMaskFromSamples(
+    float3 tl, float3 t, float3 tr,
+    float3 l,  float3 c, float3 r,
+    float3 bl, float3 b, float3 br)
 {
-    float3 tl = GetPixelColor(uv + pixelSize * float2(-1, -1));
-    float3 t  = GetPixelColor(uv + pixelSize * float2( 0, -1));
-    float3 tr = GetPixelColor(uv + pixelSize * float2( 1, -1));
-    float3 l  = GetPixelColor(uv + pixelSize * float2(-1,  0));
-    float3 c  = GetPixelColor(uv);
-    float3 r  = GetPixelColor(uv + pixelSize * float2( 1,  0));
-    float3 bl = GetPixelColor(uv + pixelSize * float2(-1,  1));
-    float3 b  = GetPixelColor(uv + pixelSize * float2( 0,  1));
-    float3 br = GetPixelColor(uv + pixelSize * float2( 1,  1));
-
+    // Compute luminance for each sample
     float lumTL = GetLuminance(tl);
     float lumT  = GetLuminance(t);
     float lumTR = GetLuminance(tr);
@@ -313,80 +300,35 @@ float ComputeEdgeMaskLuminance(float2 uv, float2 pixelSize)
     float lumB  = GetLuminance(b);
     float lumBR = GetLuminance(br);
 
+    // Luminance-based Sobel operator
     float gx = -lumTL - 2.0 * lumL - lumBL + lumTR + 2.0 * lumR + lumBR;
     float gy = -lumTL - 2.0 * lumT - lumTR + lumBL + 2.0 * lumB + lumBR;
     float gradMag = length(float2(gx, gy));
 
-    return saturate(gradMag * 4.0);
-}
+    float lumMask = saturate(gradMag * 4.0);
 
-//------------------------------------------------------------------------------
-// 6) Color + Luminance Sobel
-//------------------------------------------------------------------------------
-float ComputeEdgeMaskColor(float2 uv, float2 pixelSize)
-{
-    float3 tl = GetPixelColor(uv + pixelSize * float2(-1, -1));
-    float3 t  = GetPixelColor(uv + pixelSize * float2( 0, -1));
-    float3 tr = GetPixelColor(uv + pixelSize * float2( 1, -1));
-    float3 l  = GetPixelColor(uv + pixelSize * float2(-1,  0));
-    float3 c  = GetPixelColor(uv);
-    float3 r  = GetPixelColor(uv + pixelSize * float2( 1,  0));
-    float3 bl = GetPixelColor(uv + pixelSize * float2(-1,  1));
-    float3 b  = GetPixelColor(uv + pixelSize * float2( 0,  1));
-    float3 br = GetPixelColor(uv + pixelSize * float2( 1,  1));
-
-    float lumTL = GetLuminance(tl);
-    float lumT  = GetLuminance(t);
-    float lumTR = GetLuminance(tr);
-    float lumL  = GetLuminance(l);
-    float lumC  = GetLuminance(c);
-    float lumR  = GetLuminance(r);
-    float lumBL = GetLuminance(bl);
-    float lumB  = GetLuminance(b);
-    float lumBR = GetLuminance(br);
-
-    float gx = -lumTL - 2.0 * lumL - lumBL + lumTR + 2.0 * lumR + lumBR;
-    float gy = -lumTL - 2.0 * lumT - lumTR + lumBL + 2.0 * lumB + lumBR;
-    float gradMag = length(float2(gx, gy));
-
+    // For color edge detection, accumulate maximum difference along cardinal directions
     float colorDiff = 0.0;
     colorDiff = max(colorDiff, ColorDifference(c, l));
     colorDiff = max(colorDiff, ColorDifference(c, r));
     colorDiff = max(colorDiff, ColorDifference(c, t));
     colorDiff = max(colorDiff, ColorDifference(c, b));
+    float colMask = saturate(max(gradMag, colorDiff) * 4.0);
 
-    float combined = max(gradMag, colorDiff);
-    return saturate(combined * 4.0);
-}
-
-//------------------------------------------------------------------------------
-// 7) Hybrid Edge Mask
-//------------------------------------------------------------------------------
-float ComputeEdgeMaskHybrid(float2 uv, float2 pixelSize)
-{
-    float lumMask   = ComputeEdgeMaskLuminance(uv, pixelSize);
-    float colorMask = ComputeEdgeMaskColor(uv, pixelSize);
-    return saturate(lumMask * 0.5 + colorMask * 0.5);
-}
-
-//------------------------------------------------------------------------------
-// 8) Master Edge Mask
-//------------------------------------------------------------------------------
-float ComputeEdgeMask(float2 uv, float2 pixelSize)
-{
     if (EdgeMode == 0)
-        return ComputeEdgeMaskLuminance(uv, pixelSize);
+        return lumMask;
     else if (EdgeMode == 1)
-        return ComputeEdgeMaskColor(uv, pixelSize);
-    else
-        return ComputeEdgeMaskHybrid(uv, pixelSize);
+        return colMask;
+    else // Hybrid mode: blend 50:50
+        return saturate(lumMask * 0.5 + colMask * 0.5);
 }
 
 //------------------------------------------------------------------------------
-// 9) Anti-Aliasing Routine
+// 6) Anti-Aliasing Routine
 //------------------------------------------------------------------------------
 float3 ApplyAntiAliasing(float2 uv, float2 pixelSize, float2 edgeDir, float edgeMask)
 {
+    // Get perpendicular direction for edge smoothing
     float2 perp = float2(-edgeDir.y, edgeDir.x);
     float3 centerCol   = GetPixelColor(uv);
     float3 neighborCol = GetPixelColor(uv + perp * pixelSize);
@@ -396,12 +338,11 @@ float3 ApplyAntiAliasing(float2 uv, float2 pixelSize, float2 edgeDir, float edge
     float t = smoothstep(lower, upper, edgeMask);
     t = min(t, MaxBlend);
     float blendFactor = t * FilterStrength * 0.1;
-
     return lerp(centerCol, neighborCol, saturate(blendFactor));
 }
 
 //------------------------------------------------------------------------------
-// 10) Device-Specific Processing
+// 7) Device-Specific Processing (unchanged)
 //------------------------------------------------------------------------------
 float3 ApplyDeviceSpecificProcessing(float3 original, float3 aaColor)
 {
@@ -417,28 +358,39 @@ float3 ApplyDeviceSpecificProcessing(float3 original, float3 aaColor)
 }
 
 //------------------------------------------------------------------------------
-// 11) Main Pixel Shader with Conditional Variance Computation
+// 8) Main Pixel Shader with Optimizations
 //------------------------------------------------------------------------------
 float3 PS_VectorSeek(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 {
     float2 pixelSize = ReShade::PixelSize;
     float3 originalColor = GetPixelColor(uv);
-    float rawEdgeMask = ComputeEdgeMask(uv, pixelSize);
-    bool weakEdge = (rawEdgeMask < EdgeDetectionThreshold);
 
-    // Early exit if the edge is weak.
-    if (weakEdge)
+    // Cache the 3x3 neighborhood (one texture fetch per sample)
+    float3 tl = GetPixelColor(uv + pixelSize * float2(-1, -1));
+    float3 t  = GetPixelColor(uv + pixelSize * float2( 0, -1));
+    float3 tr = GetPixelColor(uv + pixelSize * float2( 1, -1));
+    float3 l  = GetPixelColor(uv + pixelSize * float2(-1,  0));
+    float3 c  = originalColor;
+    float3 r  = GetPixelColor(uv + pixelSize * float2( 1,  0));
+    float3 bl = GetPixelColor(uv + pixelSize * float2(-1,  1));
+    float3 b  = GetPixelColor(uv + pixelSize * float2( 0,  1));
+    float3 br = GetPixelColor(uv + pixelSize * float2( 1,  1));
+
+    // Compute the edge mask from cached samples
+    float rawEdgeMask = ComputeEdgeMaskFromSamples(tl, t, tr, l, c, r, bl, b, br);
+
+    // Early exit for weak edges (and skip heavy calculations if possible)
+    if (rawEdgeMask < EdgeDetectionThreshold)
     {
         if (DebugView)
         {
             if (DebugMode == 1)
             {
-                // Compute local variance only when needed for debug.
                 float localVariance = (SamplingQuality == 0) ? ComputeLocalVariance3x3(uv, pixelSize) :
-                                       (SamplingQuality == 1) ? ComputeLocalVariance5x5(uv, pixelSize) :
-                                       (SamplingQuality == 2) ? ComputeLocalVariance7x7(uv, pixelSize) :
-                                       (SamplingQuality == 3) ? ComputeLocalVariance9x9(uv, pixelSize) :
-                                                                ComputeLocalVariance13x13(uv, pixelSize);
+                                        (SamplingQuality == 1) ? ComputeLocalVariance5x5(uv, pixelSize) :
+                                        (SamplingQuality == 2) ? ComputeLocalVariance7x7(uv, pixelSize) :
+                                        (SamplingQuality == 3) ? ComputeLocalVariance9x9(uv, pixelSize) :
+                                                                 ComputeLocalVariance13x13(uv, pixelSize);
                 float varVis = localVariance * 50.0;
                 return float3(varVis, varVis, varVis);
             }
@@ -450,20 +402,16 @@ float3 PS_VectorSeek(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
         return originalColor;
     }
 
-    // Compute edge direction.
-    float3 lfCol = GetPixelColor(uv + pixelSize * float2(-1, 0));
-    float3 rtCol = GetPixelColor(uv + pixelSize * float2( 1, 0));
-    float3 upCol = GetPixelColor(uv + pixelSize * float2( 0,-1));
-    float3 dnCol = GetPixelColor(uv + pixelSize * float2( 0, 1));
-
-    float gx = GetLuminance(rtCol) - GetLuminance(lfCol);
-    float gy = GetLuminance(dnCol) - GetLuminance(upCol);
+    // Compute edge gradient using cached left/right and top/bottom samples
+    float gx = GetLuminance(r) - GetLuminance(l);
+    float gy = GetLuminance(b) - GetLuminance(t);
     float2 edgeDir = normalize(float2(gx, gy) + 1e-8);
 
+    // Apply anti-aliasing using the optimized blending
     float3 aaColor = ApplyAntiAliasing(uv, pixelSize, edgeDir, rawEdgeMask);
     float3 finalColor = ApplyDeviceSpecificProcessing(originalColor, aaColor);
 
-    // Debug output for non-weak edges.
+    // Debug output for non-weak edges
     if (DebugView)
     {
         if (DebugMode == 0)
@@ -471,10 +419,10 @@ float3 PS_VectorSeek(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
         else if (DebugMode == 1)
         {
             float localVariance = (SamplingQuality == 0) ? ComputeLocalVariance3x3(uv, pixelSize) :
-                                   (SamplingQuality == 1) ? ComputeLocalVariance5x5(uv, pixelSize) :
-                                   (SamplingQuality == 2) ? ComputeLocalVariance7x7(uv, pixelSize) :
-                                   (SamplingQuality == 3) ? ComputeLocalVariance9x9(uv, pixelSize) :
-                                                            ComputeLocalVariance13x13(uv, pixelSize);
+                                    (SamplingQuality == 1) ? ComputeLocalVariance5x5(uv, pixelSize) :
+                                    (SamplingQuality == 2) ? ComputeLocalVariance7x7(uv, pixelSize) :
+                                    (SamplingQuality == 3) ? ComputeLocalVariance9x9(uv, pixelSize) :
+                                                             ComputeLocalVariance13x13(uv, pixelSize);
             float varVis = localVariance * 50.0;
             return float3(varVis, varVis, varVis);
         }
@@ -482,18 +430,17 @@ float3 PS_VectorSeek(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
         {
             float lower = EdgeDetectionThreshold;
             float upper = EdgeDetectionThreshold * 2.0;
-            float t = smoothstep(lower, upper, rawEdgeMask);
-            t = min(t, MaxBlend);
-            float blendFactor = t * FilterStrength * 0.1;
+            float tVal = smoothstep(lower, upper, rawEdgeMask);
+            tVal = min(tVal, MaxBlend);
+            float blendFactor = tVal * FilterStrength * 0.1;
             return float3(blendFactor, blendFactor, blendFactor);
         }
     }
-
     return finalColor;
 }
 
 //------------------------------------------------------------------------------
-// 12) Technique Declaration
+// 9) Technique Declaration (unchanged)
 //------------------------------------------------------------------------------
 technique MyVectorSeek
 {
