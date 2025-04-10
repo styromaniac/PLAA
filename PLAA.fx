@@ -37,7 +37,7 @@ sampler samplerHistory { Texture = texHistory; };
 // Optimized Baked-in Settings
 //-----------------------------
 // Performance-optimized values based on screenshot settings
-static const float BAKED_EdgeDetectionThreshold = 0.10;
+static const float BAKED_EdgeDetectionThreshold = 0.05;
 static const float BAKED_FilterStrength = 10.0;
 static const float BAKED_DepthSensitivity = 1.0;
 static const float BAKED_TemporalReinforcementStrength = 0.5;
