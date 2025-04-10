@@ -1,10 +1,20 @@
 //=====================================================================
 // PLAA - Low Latency Anti-Aliasing with Performance Optimizations
-// All settings baked-in for maximum performance and minimal latency
+// Most settings baked-in for maximum performance and minimal latency
 // Flip Depth Direction is enabled by default
 //=====================================================================
 
 #include "ReShade.fxh"
+
+//-----------------------------
+// Customizable Setting
+//-----------------------------
+uniform float EdgeDetectionThreshold <
+    ui_type = "slider";
+    ui_min = 0.01; ui_max = 0.30; ui_step = 0.01;
+    ui_label = "Edge Detection Threshold";
+    ui_tooltip = "Lower values detect more edges. Higher values focus only on the strongest edges.";
+> = 0.05; // Default from screenshot
 
 //-----------------------------
 // Textures and Samplers
@@ -29,12 +39,13 @@ sampler samplerHistory { Texture = texHistory; };
 // Optimized Baked-in Settings
 //-----------------------------
 // Performance-optimized values based on screenshot settings
-static const float BAKED_EdgeDetectionThreshold = 0.10;
 static const float BAKED_FilterStrength = 10.0;
 static const float BAKED_DepthSensitivity = 1.0;
 static const float BAKED_TemporalReinforcementStrength = 0.5;
 static const float BAKED_MotionSensitivity = 1.0;
 static const bool BAKED_FlipDepthDirection = true; // Baked in as enabled
+
+// Note: EdgeDetectionThreshold is now customizable via UI
 
 // Reduced sample count for better performance while maintaining quality
 static const int SAMPLE_COUNT = 3; // Reduced from 4 (9 samples total) to 3 (7 samples total)
@@ -88,8 +99,8 @@ void OptimizedEdgeDetection(float2 texcoord, float2 pixelSize, out float edgeStr
     // Calculate gradient magnitude
     float gMag = sqrt(gx * gx + gy * gy);
 
-    // Calculate edge strength with baked threshold
-    edgeStrength = saturate(gMag / (BAKED_EdgeDetectionThreshold * 8.0));
+    // Calculate edge strength with user-defined threshold (no longer baked in)
+    edgeStrength = saturate(gMag / (EdgeDetectionThreshold * 8.0));
 
     // Calculate edge direction only if edge is strong enough
     edgeDirection = float2(0, 0);
