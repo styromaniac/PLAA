@@ -1,10 +1,18 @@
 //=====================================================================
 // PLAA - Low Latency Anti-Aliasing with Performance Optimizations
-// All settings baked-in for maximum performance and minimal latency
-// Flip Depth Direction is enabled by default
+// Settings baked-in for maximum performance and minimal latency
 //=====================================================================
 
 #include "ReShade.fxh"
+
+//-----------------------------
+// Only Customizable Setting
+//-----------------------------
+uniform bool FlipDepthDirection <
+    ui_type = "bool";
+    ui_label = "Flip Depth Direction";
+    ui_tooltip = "Enable if closer objects have higher depth values.";
+> = false;
 
 //-----------------------------
 // Textures and Samplers
@@ -29,12 +37,11 @@ sampler samplerHistory { Texture = texHistory; };
 // Optimized Baked-in Settings
 //-----------------------------
 // Performance-optimized values based on screenshot settings
-static const float BAKED_EdgeDetectionThreshold = 0.05;
+static const float BAKED_EdgeDetectionThreshold = 0.10;
 static const float BAKED_FilterStrength = 10.0;
 static const float BAKED_DepthSensitivity = 1.0;
 static const float BAKED_TemporalReinforcementStrength = 0.5;
 static const float BAKED_MotionSensitivity = 1.0;
-static const bool BAKED_FlipDepthDirection = true; // Baked in as enabled
 
 // Reduced sample count for better performance while maintaining quality
 static const int SAMPLE_COUNT = 3; // Reduced from 4 (9 samples total) to 3 (7 samples total)
@@ -52,8 +59,7 @@ float3 GetPixelColor(float2 texcoord) {
 
 float GetAdjustedDepth(float2 texcoord) {
     float depth = ReShade::GetLinearizedDepth(texcoord);
-    // Flip depth is now baked in
-    return BAKED_FlipDepthDirection ? 1.0 - depth : depth;
+    return FlipDepthDirection ? 1.0 - depth : depth;
 }
 
 //-----------------------------
