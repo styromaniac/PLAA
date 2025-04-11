@@ -1,6 +1,5 @@
 //=====================================================================
 // PLAA_AutoOptimized - Ultimate Auto-Optimized AA Shader
-// With hard-coded edge detection threshold
 //=====================================================================
 
 #include "ReShade.fxh"
