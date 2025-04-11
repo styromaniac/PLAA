@@ -24,7 +24,7 @@
 //-----------------------------
 // Hard-coded settings
 //-----------------------------
-#define EDGE_THRESHOLD 0.07  // Hard-coded to lowest value (0.01) for maximum edge detection
+#define EDGE_THRESHOLD 0.1  // Hard-coded to lowest value (0.01) for maximum edge detection
 #define EDGE_NORM (EDGE_THRESHOLD * 8.0)
 #define K_BLEND_DIV 4.0
 
