@@ -51,7 +51,7 @@ sampler samplerHistory { Texture = texHistory; };
 // Baked-In Performance Settings
 //-----------------------------
 static const float BAKED_FilterStrength = 10.0;
-static const float BAKED_TemporalReinforcementStrength = 0.5;
+static const float BAKED_TemporalReinforcementStrength = 0.0;
 static const bool BAKED_FlipDepthDirection = true;
 
 //-----------------------------
